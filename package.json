@@ -1,0 +1,12 @@
+{
+  "private": true,
+  "scripts": {
+    "build:avatar": "esbuild avatar3d.js --bundle --format=iife --global-name=OrbAvatar3D --outfile=avatar3d.bundle.js --minify"
+  },
+  "dependencies": {
+    "three": "^0.180.0"
+  },
+  "devDependencies": {
+    "esbuild": "^0.25.10"
+  }
+}

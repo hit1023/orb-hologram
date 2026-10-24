@@ -1,0 +1,453 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover,user-scalable=no">
+<title>ORB Hologram</title>
+<style>
+  :root { color-scheme: dark; }
+  html, body { margin: 0; height: 100%; background: #000; overflow: hidden; touch-action: manipulation; }
+  canvas { position: fixed; inset: 0; width: 100%; height: 100%; display: block; }
+  #ui { position: fixed; left: 0; right: 0; bottom: 0; padding: 12px 16px calc(12px + env(safe-area-inset-bottom));
+        display: flex; flex-wrap: wrap; gap: 8px; justify-content: center; align-items: center;
+        background: linear-gradient(transparent, rgba(0,0,0,.85)); transition: opacity .4s; font: 14px/1.4 system-ui, sans-serif; color: #cde; }
+  #ui.hidden { opacity: 0; pointer-events: none; }
+  button, select { font: inherit; color: #def; background: #123; border: 1px solid #357; border-radius: 10px; padding: 10px 14px; min-height: 44px; }
+  button.on { background: #0a6; border-color: #3fc; color: #fff; }
+  label { display: flex; align-items: center; gap: 6px; }
+  input[type=range] { width: 110px; }
+  #say { flex: 1 1 180px; min-width: 0; font: inherit; color: #def; background: #0a1520; border: 1px solid #357; border-radius: 10px; padding: 10px 12px; min-height: 44px; box-sizing: border-box; }
+  #log { position: fixed; top: calc(8px + env(safe-area-inset-top)); left: 12px; right: 12px; font: 12px/1.5 system-ui, sans-serif; color: #7ab; pointer-events: none; white-space: pre-wrap; }
+  #log.hidden { display: none; }
+</style>
+</head>
+<body>
+<canvas id="c"></canvas>
+<div id="log"></div>
+<div id="ui">
+  <select id="char" aria-label="キャラ">
+    <option value="ring">リング</option>
+    <option value="dancer">ダンス</option>
+    <option value="orb">球体</option>
+  </select>
+  <select id="mode" aria-label="表示モード">
+    <option value="plain">通常(画面で確認)</option>
+    <option value="board">斜め板(1枚)</option>
+    <option value="pyramid">ピラミッド(4方向)</option>
+  </select>
+  <button id="mic">マイク開始</button>
+  <input id="say" placeholder="話しかける(文字でもOK)" enterkeyhint="send">
+  <label>大きさ<input id="size" type="range" min="25" max="100" value="60"></label>
+  <label>位置<input id="pos" type="range" min="0" max="100" value="50"></label>
+  <button id="hide">UIを隠す</button>
+</div>
+<script>
+'use strict';
+/* ===== 設定 ===== */
+const CONFIG = {
+  // 返答APIを用意したらURLを入れる。POST {text} → {reply}。空ならデモ返答。
+  chatEndpoint: '',
+  lang: 'ja-JP',
+};
+
+/* ===== 状態 ===== */
+// idle(待機) / listening(聞いている) / thinking(考え中) / speaking(話している)
+const PALETTE = {
+  idle:      { h: 200, s: 90, l: 62 },
+  listening: { h: 150, s: 90, l: 60 },
+  thinking:  { h: 265, s: 85, l: 68 },
+  speaking:  { h: 28,  s: 95, l: 64 },
+};
+let state = 'idle';
+let level = 0;          // 0..1 聞く/話すの音量
+let levelSmooth = 0;
+const cur = { ...PALETTE.idle };   // なめらかに変化する現在色
+let t0 = performance.now();
+
+const $ = id => document.getElementById(id);
+const cv = $('c'), ctx = cv.getContext('2d');
+const dancerImage = new Image();
+let dancerImageReady = false;
+let dancerImageError = false;
+dancerImage.onload = () => { dancerImageReady = true; };
+dancerImage.onerror = () => { dancerImageError = true; };
+dancerImage.src = 'dancer-concept.png?v=1';
+let W = 0, H = 0, DPR = 1;
+function resize() {
+  DPR = Math.min(window.devicePixelRatio || 1, 2);
+  W = innerWidth; H = innerHeight;
+  cv.width = Math.round(W * DPR); cv.height = Math.round(H * DPR);
+}
+addEventListener('resize', resize); resize();
+
+function setState(s) { state = s; log(); }
+function log(extra) {
+  $('log').textContent = `状態: ${({idle:'待機',listening:'聞いている',thinking:'考え中',speaking:'話している'})[state]}` + (extra ? '\n' + extra : '');
+}
+
+/* ===== 球体の描画(加算合成。黒背景ほど明るく見える) ===== */
+function hsl(h, s, l, a) { return `hsla(${h},${s}%,${l}%,${a})`; }
+function lerp(a, b, k) { return a + (b - a) * k; }
+
+const TICKER_TEXT = 'HOLOGRAM AI  ・  こんにちは、話しかけてね  ・  ';
+function drawTicker(R, time) {
+  // キャラと重ならない帯に、一定の文章を左から右へ流す(板の反射で正しい向きに読める)
+  const half = W * 0.45;
+  const fs = Math.max(16, R * 0.3);
+  ctx.font = `bold ${fs}px "Hiragino Kaku Gothic ProN", "Noto Sans JP", sans-serif`;
+  ctx.textAlign = 'left'; ctx.textBaseline = 'middle';
+  const unit = ctx.measureText(TICKER_TEXT).width;
+  const off = (time * R * 0.9) % unit;                 // 右へ流れる
+  const y = R * 2.1;
+  const g = ctx.createLinearGradient(-half, 0, half, 0);
+  g.addColorStop(0, hsl(cur.h, cur.s, 85, 0));
+  g.addColorStop(0.12, hsl(cur.h, cur.s, 85, 0.95));
+  g.addColorStop(0.88, hsl(cur.h, cur.s, 85, 0.95));
+  g.addColorStop(1, hsl(cur.h, cur.s, 85, 0));
+  ctx.save();
+  ctx.beginPath(); ctx.rect(-half, y - fs, half * 2, fs * 2); ctx.clip();
+  ctx.fillStyle = g;
+  for (let x = -half - unit + off; x < half; x += unit) ctx.fillText(TICKER_TEXT, x, y);
+  ctx.restore();
+}
+
+function drawOrb(R, time) {
+  // 呼び出し側で原点=球の中心にしてある
+  const p = PALETTE[state];
+  const k = 0.06;
+  cur.h += (((p.h - cur.h + 540) % 360) - 180) * k;   // 色相は最短経路で補間
+  cur.h = (cur.h + 360) % 360;
+  cur.s = lerp(cur.s, p.s, k); cur.l = lerp(cur.l, p.l, k);
+  levelSmooth = lerp(levelSmooth, level, 0.25);
+  const lv = levelSmooth;
+
+  // 常に動き続ける: ゆっくりふわふわ漂い、呼吸し、表面が波打つ
+  ctx.translate(Math.sin(time * 0.7) * R * 0.07, Math.sin(time * 1.1 + 1) * R * 0.09);
+  const breathe = 1 + Math.sin(time * 1.4) * 0.06 + Math.sin(time * 2.3) * 0.015;
+  const energy = state === 'idle' ? 0.26 : state === 'thinking' ? 0.3 : 0.32 + lv * 0.9;
+  ctx.globalCompositeOperation = 'lighter';
+
+  // 外側の光(ハロー)
+  const halo = ctx.createRadialGradient(0, 0, R * 0.2, 0, 0, R * (1.9 + lv * 0.6));
+  halo.addColorStop(0, hsl(cur.h, cur.s, cur.l, 0.35 + lv * 0.25));
+  halo.addColorStop(1, hsl(cur.h, cur.s, cur.l, 0));
+  ctx.fillStyle = halo;
+  ctx.beginPath(); ctx.arc(0, 0, R * (1.9 + lv * 0.6), 0, Math.PI * 2); ctx.fill();
+
+  drawTicker(R, time);
+
+  // 本体: 音量で表面がうねるブロブ(重ね描きでガラス玉っぽく)
+  for (let layer = 0; layer < 3; layer++) {
+    const lr = R * (1 - layer * 0.08) * breathe;
+    const N = 72;
+    ctx.beginPath();
+    for (let i = 0; i <= N; i++) {
+      const a = (i / N) * Math.PI * 2;
+      const wob =
+        Math.sin(a * 3 + time * (1.2 + layer * 0.5)) * 0.5 +
+        Math.sin(a * 5 - time * (1.7 + layer * 0.3)) * 0.3 +
+        Math.sin(a * 2 + time * 0.7) * 0.4;
+      const rr = lr * (1 + wob * energy * 0.45);
+      const x = Math.cos(a) * rr, y = Math.sin(a) * rr;
+      i ? ctx.lineTo(x, y) : ctx.moveTo(x, y);
+    }
+    ctx.closePath();
+    const g = ctx.createRadialGradient(-lr * 0.3, -lr * 0.35, lr * 0.05, 0, 0, lr * 1.05);
+    g.addColorStop(0, hsl(cur.h, cur.s - 10, 82, 0.75));
+    g.addColorStop(0.35, hsl(cur.h, cur.s, cur.l - 2, 0.5));
+    g.addColorStop(1, hsl(cur.h, cur.s, cur.l - 30, 0.22));
+    ctx.fillStyle = g; ctx.fill();
+  }
+
+  // 輪郭の光
+  ctx.lineWidth = Math.max(1.5, R * 0.025);
+  ctx.strokeStyle = hsl(cur.h, cur.s, cur.l + 12, 0.85);
+  ctx.beginPath(); ctx.arc(0, 0, R * breathe * (1 + lv * 0.06), 0, Math.PI * 2); ctx.stroke();
+
+  // 球の表面に散らした光の点を回転させて立体に見せる(手前=大きく明るい / 奥=小さく暗い)
+  const NS = 90, tilt = 0.45, spin = time * (state === 'thinking' ? 1.4 : 0.6);
+  for (let i = 0; i < NS; i++) {
+    const phi = Math.acos(1 - 2 * (i + 0.5) / NS);
+    const th = i * 2.399963 + spin;
+    const x0 = Math.sin(phi) * Math.cos(th), y0 = Math.cos(phi), z0 = Math.sin(phi) * Math.sin(th);
+    const y1 = y0 * Math.cos(tilt) - z0 * Math.sin(tilt);
+    const z1 = y0 * Math.sin(tilt) + z0 * Math.cos(tilt);
+    const dep = (z1 + 1) / 2;
+    ctx.fillStyle = hsl(cur.h, cur.s, 60 + dep * 30, 0.12 + dep * dep * 0.85);
+    ctx.beginPath(); ctx.arc(x0 * R * 0.97, y1 * R * 0.97, R * (0.012 + 0.03 * dep), 0, Math.PI * 2); ctx.fill();
+  }
+
+  // 常時: 球のまわりをゆっくり回る小さな光の粒(状態を問わず動き続ける)
+  for (let i = 0; i < 6; i++) {
+    const a = time * (0.35 + i * 0.05) + i * 1.05;
+    const rr = R * (1.55 + Math.sin(time * 0.9 + i * 2) * 0.15);
+    ctx.fillStyle = hsl(cur.h, cur.s, 85, 0.5 + Math.sin(time * 2 + i) * 0.25);
+    ctx.beginPath(); ctx.arc(Math.cos(a) * rr, Math.sin(a) * rr * 0.8, R * (0.025 + (i % 3) * 0.01), 0, Math.PI * 2); ctx.fill();
+  }
+
+  // 状態ごとの演出
+  if (state === 'listening') {            // 声に合わせて広がる波紋
+    for (let i = 0; i < 3; i++) {
+      const ph = ((time * 0.8 + i / 3) % 1);
+      ctx.strokeStyle = hsl(cur.h, cur.s, cur.l + 10, (1 - ph) * (0.25 + lv * 0.6));
+      ctx.lineWidth = Math.max(1, R * 0.02);
+      ctx.beginPath(); ctx.arc(0, 0, R * (1.05 + ph * (0.6 + lv * 0.5)), 0, Math.PI * 2); ctx.stroke();
+    }
+  } else if (state === 'thinking') {      // 周回する光の粒
+    for (let i = 0; i < 9; i++) {
+      const a = time * 2.2 + i * (Math.PI * 2 / 9);
+      const rr = R * (1.3 + Math.sin(time * 2 + i) * 0.08);
+      ctx.fillStyle = hsl(cur.h, cur.s, 80, 0.85);
+      ctx.beginPath(); ctx.arc(Math.cos(a) * rr, Math.sin(a) * rr * 0.9, R * 0.045, 0, Math.PI * 2); ctx.fill();
+    }
+  } else if (state === 'speaking') {      // 話すリズムで脈打つリング
+    ctx.strokeStyle = hsl(cur.h, cur.s, cur.l + 14, 0.2 + lv * 0.6);
+    ctx.lineWidth = Math.max(1.5, R * 0.03);
+    ctx.beginPath(); ctx.arc(0, 0, R * (1.15 + lv * 0.35), 0, Math.PI * 2); ctx.stroke();
+  }
+  ctx.globalCompositeOperation = 'source-over';
+}
+
+
+/* ===== リング状のキャラ: 3つの輪が立体的に回る ===== */
+function rot3(x, y, z, ax, ay, az) {
+  let y1 = y * Math.cos(ax) - z * Math.sin(ax), z1 = y * Math.sin(ax) + z * Math.cos(ax); y = y1; z = z1;
+  let x1 = x * Math.cos(ay) + z * Math.sin(ay); z1 = -x * Math.sin(ay) + z * Math.cos(ay); x = x1; z = z1;
+  x1 = x * Math.cos(az) - y * Math.sin(az); y1 = x * Math.sin(az) + y * Math.cos(az);
+  return [x1, y1, z1];
+}
+
+function drawRing(R, time) {
+  const p = PALETTE[state];
+  const k = 0.06;
+  cur.h += (((p.h - cur.h + 540) % 360) - 180) * k;
+  cur.h = (cur.h + 360) % 360;
+  cur.s = lerp(cur.s, p.s, k); cur.l = lerp(cur.l, p.l, k);
+  levelSmooth = lerp(levelSmooth, level, 0.25);
+  const lv = levelSmooth;
+
+  ctx.translate(Math.sin(time * 0.7) * R * 0.05, Math.sin(time * 1.1 + 1) * R * 0.07);
+  ctx.globalCompositeOperation = 'lighter';
+  drawTicker(R, time);
+
+  const sp = state === 'thinking' ? 2.4 : state === 'speaking' ? 1.3 + lv * 2.5 : state === 'listening' ? 1.1 : 0.8;
+  const grow = state === 'speaking' ? 1 + lv * 0.25 : 1 + Math.sin(time * 1.4) * 0.03;
+  const lw = Math.max(2, R * 0.05);
+
+  // 中心の光(芯)
+  const cr = R * (0.2 + lv * 0.18) * (1 + Math.sin(time * 2.2) * 0.08);
+  const core = ctx.createRadialGradient(0, 0, 0, 0, 0, cr * 2.4);
+  core.addColorStop(0, hsl(cur.h, cur.s - 10, 88, 0.95));
+  core.addColorStop(0.4, hsl(cur.h, cur.s, cur.l, 0.5));
+  core.addColorStop(1, hsl(cur.h, cur.s, cur.l, 0));
+  ctx.fillStyle = core; ctx.beginPath(); ctx.arc(0, 0, cr * 2.4, 0, Math.PI * 2); ctx.fill();
+
+  const rings = [
+    { r: 1.00, ax: time * 0.9 * sp,       ay: 0.35,                  az: 0.2 },
+    { r: 0.80, ax: 1.1,                   ay: time * 1.1 * sp,       az: time * 0.2 },
+    { r: 0.60, ax: time * 0.7 * sp + 2,   ay: time * 0.5 * sp,       az: 0.9 },
+  ];
+  const N = 96;
+  rings.forEach((rg, idx) => {
+    const rr = R * rg.r * grow;
+    let prev = null;
+    for (let i = 0; i <= N; i++) {
+      const t = (i / N) * Math.PI * 2;
+      const [x, y, z] = rot3(Math.cos(t), Math.sin(t), 0, rg.ax, rg.ay, rg.az);
+      const sc = 1 / (1 - z * 0.2);
+      const q = [x * rr * sc, y * rr * sc, z];
+      if (prev) {
+        const d = ((q[2] + prev[2]) / 2 + 1) / 2;
+        ctx.strokeStyle = hsl(cur.h, cur.s, 50 + d * 25, 0.18 + d * 0.6);
+        ctx.lineWidth = lw * (0.45 + d * 0.9);
+        ctx.lineCap = 'butt';
+        ctx.beginPath(); ctx.moveTo(prev[0], prev[1]); ctx.lineTo(q[0], q[1]); ctx.stroke();
+      }
+      prev = q;
+    }
+    // 輪の上を走る光の玉(動きが見える)
+    const beads = state === 'thinking' ? 3 : 1;
+    for (let b = 0; b < beads; b++) {
+      const t = time * sp * (1.2 + idx * 0.3) * (idx % 2 ? -1 : 1) + b * (Math.PI * 2 / beads) + idx;
+      const [x, y, z] = rot3(Math.cos(t), Math.sin(t), 0, rg.ax, rg.ay, rg.az);
+      const sc = 1 / (1 - z * 0.2), d = (z + 1) / 2;
+      ctx.fillStyle = hsl(cur.h, cur.s - 10, 92, 0.35 + d * 0.65);
+      ctx.beginPath(); ctx.arc(x * rr * sc, y * rr * sc, R * (0.035 + 0.04 * d), 0, Math.PI * 2); ctx.fill();
+    }
+  });
+
+  if (state === 'listening') {   // 声に合わせて広がる波紋
+    for (let i = 0; i < 3; i++) {
+      const ph = ((time * 0.8 + i / 3) % 1);
+      ctx.strokeStyle = hsl(cur.h, cur.s, cur.l + 10, (1 - ph) * (0.25 + lv * 0.6));
+      ctx.lineWidth = Math.max(1, R * 0.02);
+      ctx.beginPath(); ctx.arc(0, 0, R * (1.1 + ph * (0.6 + lv * 0.5)), 0, Math.PI * 2); ctx.stroke();
+    }
+  }
+  ctx.globalCompositeOperation = 'source-over';
+}
+
+/* ===== ダンサー: 基準デザインを崩さない透過イラスト表示 ===== */
+function drawDancer(R, time) {
+  if (!dancerImageReady) {
+    ctx.save();
+    ctx.fillStyle = dancerImageError ? '#ff68ca' : '#62f7ff';
+    ctx.font = `600 ${Math.max(13, R * 0.12)}px system-ui, sans-serif`;
+    ctx.textAlign = 'center';
+    ctx.fillText(dancerImageError ? 'IMAGE ERROR' : 'LOADING…', 0, 0);
+    ctx.restore();
+    drawTicker(R, time);
+    return;
+  }
+
+  const p = PALETTE[state];
+  const k = 0.06;
+  cur.h += (((p.h - cur.h + 540) % 360) - 180) * k;
+  cur.h = (cur.h + 360) % 360;
+  cur.s = lerp(cur.s, p.s, k); cur.l = lerp(cur.l, p.l, k);
+  levelSmooth = lerp(levelSmooth, level, 0.25);
+  const lv = levelSmooth;
+
+  const dh = R * 4.4;
+  const dw = dh * (dancerImage.naturalWidth / dancerImage.naturalHeight);
+  const bob = Math.sin(time * 2.0) * R * 0.035;
+  const sway = Math.sin(time * 1.15) * 0.025;
+  const breathe = 1 + Math.sin(time * 2.0) * 0.012;
+
+  ctx.save();
+  ctx.globalCompositeOperation = 'source-over';
+  ctx.translate(0, bob);
+  ctx.rotate(sway);
+  ctx.scale(breathe, breathe);
+  ctx.filter = `brightness(${1.08 + lv * 0.10}) saturate(1.12) drop-shadow(0 0 ${5 + lv * 7}px rgba(48,235,255,.72)) drop-shadow(0 0 9px rgba(255,48,205,.48))`;
+  ctx.drawImage(dancerImage, -dw / 2, -R * 2.15, dw, dh);
+  ctx.filter = 'none';
+  ctx.restore();
+
+  drawTicker(R, time);
+}
+
+function drawChar(R, time) {
+  const c = $('char').value;
+  (c === 'dancer' ? drawDancer : c === 'ring' ? drawRing : drawOrb)(R, time);
+}
+
+/* ===== 画面レイアウト ===== */
+function frame(now) {
+  const time = (now - t0) / 1000;
+  ctx.setTransform(DPR, 0, 0, DPR, 0, 0);
+  ctx.fillStyle = '#000'; ctx.fillRect(0, 0, W, H);
+
+  const mode = $('mode').value;
+  const size = +$('size').value / 100;       // 画面短辺に対する割合
+  const pos = +$('pos').value / 100;         // 0..1
+  const side = Math.min(W, H);
+  const R = side * size * 0.17;
+
+  if (mode === 'plain') {
+    ctx.save(); ctx.translate(W / 2, H * 0.42); drawChar(side * size * 0.3, time); ctx.restore();
+  } else if (mode === 'board') {
+    // 斜め板: 板で上下が反転して見えるので、あらかじめ上下反転して描く
+    ctx.save(); ctx.translate(W / 2, H * (0.15 + pos * 0.6)); ctx.scale(1, -1); drawChar(R * 1.6, time); ctx.restore();
+  } else {
+    // ピラミッド: 中心から離れた4方向に、外向きが「上」になるよう配置
+    const d = side * (0.16 + size * 0.22);
+    for (let k = 0; k < 4; k++) {
+      ctx.save();
+      ctx.translate(W / 2, H * (0.2 + pos * 0.6));
+      ctx.rotate(k * Math.PI / 2);
+      ctx.translate(0, d); ctx.scale(1, -1);
+      drawChar(R, time);
+      ctx.restore();
+    }
+  }
+  requestAnimationFrame(frame);
+}
+requestAnimationFrame(frame);
+
+/* ===== マイク(聞いている間の音量) ===== */
+let micStream = null, micAnalyser = null, micBuf = null, micOn = false, recog = null;
+async function startMic() {
+  try {
+    micStream = await navigator.mediaDevices.getUserMedia({ audio: { echoCancellation: true, noiseSuppression: true } });
+  } catch (e) { log('マイクを許可できませんでした: ' + e.message); return false; }
+  const ac = new (window.AudioContext || window.webkitAudioContext)();
+  const src = ac.createMediaStreamSource(micStream);
+  micAnalyser = ac.createAnalyser(); micAnalyser.fftSize = 512;
+  src.connect(micAnalyser); micBuf = new Uint8Array(micAnalyser.fftSize);
+  micOn = true; $('mic').classList.add('on'); $('mic').textContent = 'マイク停止';
+  setInterval(() => {
+    if (!micOn || state !== 'listening') return;
+    micAnalyser.getByteTimeDomainData(micBuf);
+    let s = 0; for (const v of micBuf) { const d = (v - 128) / 128; s += d * d; }
+    level = Math.min(1, Math.sqrt(s / micBuf.length) * 5);
+  }, 50);
+  return true;
+}
+function stopMic() {
+  micOn = false; micStream && micStream.getTracks().forEach(t => t.stop()); micStream = null;
+  try { recog && recog.stop(); } catch (_) {}
+  $('mic').classList.remove('on'); $('mic').textContent = 'マイク開始'; level = 0; setState('idle');
+}
+
+/* ===== 音声認識(ブラウザ標準) ===== */
+function listenLoop() {
+  const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
+  if (!SR) { log('このブラウザは音声認識に未対応です。文字入力で試してください。'); return; }
+  recog = new SR(); recog.lang = CONFIG.lang; recog.interimResults = false; recog.continuous = false;
+  recog.onstart = () => { if (micOn && state === 'idle') setState('listening'); };
+  recog.onresult = e => { const text = e.results[0][0].transcript; handleUtterance(text); };
+  recog.onerror = () => {};
+  recog.onend = () => { if (micOn && state !== 'thinking' && state !== 'speaking') { setState('listening'); try { recog.start(); } catch (_) {} } };
+  try { recog.start(); } catch (_) {}
+}
+
+/* ===== 返答→読み上げ ===== */
+const DEMO = ['こんにちは。ちゃんと聞こえていますよ。', 'なるほど、もう少し詳しく教えてください。', 'いいですね。一緒に考えてみましょう。', 'ありがとう。話してくれてうれしいです。'];
+async function getReply(text) {
+  if (CONFIG.chatEndpoint) {
+    const r = await fetch(CONFIG.chatEndpoint, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ text }) });
+    return (await r.json()).reply;
+  }
+  await new Promise(r => setTimeout(r, 900));
+  return DEMO[Math.floor(Math.random() * DEMO.length)];
+}
+async function handleUtterance(text) {
+  if (state === 'thinking' || state === 'speaking') return;
+  try { recog && recog.stop(); } catch (_) {}
+  setState('thinking'); level = 0; log('あなた: ' + text);
+  let reply;
+  try { reply = await getReply(text); } catch (e) { reply = '通信に失敗しました。'; }
+  speak(reply);
+}
+function speak(text) {
+  setState('speaking'); log('球体: ' + text);
+  const u = new SpeechSynthesisUtterance(text); u.lang = CONFIG.lang; u.rate = 1.0;
+  let env = 0, timer = setInterval(() => {            // 読み上げ中は音量が取れないので疑似の抑揚
+    env = Math.random() < 0.35 ? 0.2 + Math.random() * 0.7 : env * 0.7; level = env;
+  }, 90);
+  u.onend = u.onerror = () => {
+    clearInterval(timer); level = 0; setState('idle');
+    if (micOn) setTimeout(listenLoop, 300);
+  };
+  speechSynthesis.cancel(); speechSynthesis.speak(u);
+}
+
+/* ===== UI ===== */
+$('mic').onclick = async () => { micOn ? stopMic() : (await startMic()) && (setState('listening'), listenLoop()); };
+$('say').addEventListener('keydown', e => {
+  if (e.key !== 'Enter' || e.isComposing || e.keyCode === 229) return;   // IME変換確定のEnterは無視
+  const v = e.target.value.trim(); if (!v) return; e.target.value = ''; handleUtterance(v);
+});
+$('hide').onclick = () => { $('ui').classList.add('hidden'); $('log').classList.add('hidden'); };
+addEventListener('pointerdown', e => {          // 隠したあとは画面タップで戻す
+  if ($('ui').classList.contains('hidden')) { $('ui').classList.remove('hidden'); $('log').classList.remove('hidden'); }
+});
+$('ui').addEventListener('pointerdown', e => e.stopPropagation());
+for (const id of ['char', 'mode', 'size', 'pos']) $(id).addEventListener('change', () => { try { localStorage.setItem('orb.' + id, $(id).value); } catch (_) {} });
+for (const id of ['char', 'mode', 'size', 'pos']) $(id).addEventListener('input', () => { try { localStorage.setItem('orb.' + id, $(id).value); } catch (_) {} });
+for (const id of ['char', 'mode', 'size', 'pos']) { try { const v = localStorage.getItem('orb.' + id); if (v) $(id).value = v; } catch (_) {} }
+log();
+</script>
+</body>
+</html>

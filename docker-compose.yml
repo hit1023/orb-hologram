@@ -1,0 +1,15 @@
+services:
+  orb-hologram:
+    image: nginx:alpine
+    container_name: orb-hologram
+    restart: unless-stopped
+    ports:
+      - "8897:80"
+    volumes:
+      - ./index.html:/usr/share/nginx/html/index.html:ro
+      - ./dancer-concept.png:/usr/share/nginx/html/dancer-concept.png:ro
+      - ./avatar3d.bundle.js:/usr/share/nginx/html/avatar3d.bundle.js:ro
+      - ./dancer-avatar.glb:/usr/share/nginx/html/dancer-avatar.glb:ro
+      - ./dancer-motion.glb:/usr/share/nginx/html/dancer-motion.glb:ro
+      - ./dancer.mp4:/usr/share/nginx/html/dancer.mp4:ro
+      - ./nginx.conf:/etc/nginx/conf.d/default.conf:ro

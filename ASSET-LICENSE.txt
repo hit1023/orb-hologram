@@ -1,0 +1,36 @@
+Active dancer artwork
+=====================
+
+Image: dancer-concept.png
+Created for this project with OpenAI ImageGen.
+The transparent artwork is displayed directly so the approved character design,
+face, proportions, hair and costume remain unchanged.
+
+Legacy unused 3D dancer assets
+==============================
+
+Model: Sintel character conversion distributed with Mesh2Motion (dancer-avatar.glb)
+Motion: Mesh2Motion "Dance Body Roll" (dancer-motion.glb)
+Source: https://github.com/Mesh2Motion/mesh2motion-app
+Model copyright: Blender Foundation, licensed CC-BY
+Official model page: https://studio.blender.org/characters/5d41a32b8307e9cd1023fa78/v2/
+Motion license: CC0 1.0 Universal
+Motion license file: https://github.com/Mesh2Motion/mesh2motion-app/blob/main/LICENSE-CC0.MD
+
+These model and motion files are no longer loaded by index.html. They are retained
+only as legacy files while the character-preserving animation workflow is designed.
+
+Runtime libraries
+=================
+
+Three.js
+Source: https://github.com/mrdoob/three.js
+License: MIT
+
+Legacy unused video
+===================
+
+The existing dancer.mp4 is no longer loaded by index.html. It came from:
+"A Young Woman Dancing while Looking at the Camera" by olia danilevich,
+https://www.pexels.com/video/a-young-woman-dancing-while-looking-at-the-camera-6868329/
+under the Pexels License.

@@ -635,7 +635,7 @@ function drawMascot(R, time) {
 const ACT_DUR = { raise_right: 4, raise_left: 4, raise_both: 4, wave: 3, clap: 3, spin: 1.8, jump: 1.6, close_eyes: 4, open_eyes: 0.4,
   cry: 4.5, laugh: 3.5, angry: 3.5, shy: 3.5, bow: 1.8, nod: 1.8, shake_head: 1.8, dance: 5, sleep: 6.5,
   wink_left: 1.6, wink_right: 1.6, peace: 3, kiss: 2.6, heart: 3.5, shiver: 3.5, sit: 4, stretch: 3.5, yawn: 3.5, point: 2.5, shrug: 2.5, sulk: 3.5,
-  surprise: 2, think: 3.5, sway: 5, march: 4, banzai: 2.5, faint: 3.6, tilt_head: 2.5, look_around: 3.5, flap: 3.5, sparkle: 3, guts: 3, cheer: 3.5, hop: 3.5, lower: 0.1 };
+  surprise: 2, think: 3.5, sway: 5, march: 4, banzai: 2.5, faint: 3.6, tilt_head: 2.5, look_around: 3.5, flap: 3.5, sparkle: 3, guts: 3, cheer: 3.5, hop: 3.5, lower: 0.1, scared: 5 };
 let actQueue = [], actCur = null, curFx = null, actFrame = -1;
 function playActions(list) {
   list = Array.isArray(list) ? list : [];
@@ -688,13 +688,23 @@ function actPose(n, u, d) {
     case 'look_around': f.yaw = 0.7 * s(u * 2.4) * env; break;
     case 'flap': f.emo = 'happy'; f.jump = Math.abs(s(u * 6)) * 0.08; f.arms = { L: [0, -(1.2 + s(u * 12) * 0.5), 0.4, 0.2], R: [0, 1.2 + s(u * 12 + PI) * 0.5, 0.4, 0.2] }; break;
     case 'lower': break;
+    case 'scared': { const pa = easeIO(Math.min(1, u / 0.6)) * (u > d - 0.9 ? Math.max(0, (d - u) / 0.9) : 1); f.pole = pa; f.hide = pa; f.emo = 'surprised'; f.mouth = 'wavy'; f.open = 0; f.arms = { L: [-1.3, 0.8], R: [-1.3, -0.8] }; f.roll = s(u * 40) * 0.03 * pa; f.yaw = 0.3 * pa; f.squash = 0.1 * pa; break; }   // 怖がって電柱に隠れる
     case 'sparkle': f.emo = 'happy'; f.sparkle = true; f.arms = { R: [0, 0.9] }; break;
     case 'sleep': { const r = u < 1.1 ? easeIO(u / 1.1) : u > d - 0.9 ? easeIO(Math.max(0, (d - u) / 0.9)) : 1; f.roll = 1.5 * r + s(u * 1.6) * 0.03 * r; f.closeEyes = true; f.arms = { L: [0, -0.3], R: [0, 0.3] }; f.sparkle = r > 0.9 && (u % 1.6) < 0.4; break; }   // 横になって寝る(ゆっくり倒れて、起き上がる)
   }
   return f;
 }
+// 頼まれなくても、ときどき自分から動く(きょろきょろ・あくび・ゆらゆら…と、まれにばたっと倒れる)
+let idleActs = true, idleFast = false, nextIdle = 0;
+try { const q = new URLSearchParams(location.search); if (q.get('idle') === '0') idleActs = false; if (q.get('idlefast')) idleFast = true; } catch (_) {}
+const IDLE_POOL = [['look_around', 30], ['yawn', 20], ['sway', 20], ['tilt_head', 15], ['sparkle', 9], ['faint', 6]];
+function pickIdle() { let r = Math.random() * 100; for (const [n, w] of IDLE_POOL) { if ((r -= w) < 0) return n; } return 'look_around'; }
 function updateActions(time) {
   if (actFrame === time) return curFx; actFrame = time;
+  if (idleActs && !actCur && !actQueue.length && (state === 'idle' || state === 'listening')) {
+    if (!nextIdle) nextIdle = time + (idleFast ? 2 : 30 + Math.random() * 40);
+    else if (time > nextIdle) { playActions([pickIdle()]); nextIdle = time + (idleFast ? 4 : 45 + Math.random() * 90); }
+  }
   for (let g = 0; g < 6; g++) {
     if (!actCur) { if (!actQueue.length) { curFx = null; return null; } const n = actQueue.shift(); actCur = { n, t0: time, d: ACT_DUR[n] }; }
     if (time - actCur.t0 < actCur.d) break;
@@ -716,7 +726,7 @@ const FAST_ACTIONS = [
   [/ウインク|ウィンク/, 'wink_right'], [/ピース/, 'peace'], [/(投げキス|キスして)/, 'kiss'], [/ハート/, 'heart'], [/(ぶるぶる|震えて)/, 'shiver'],
   [/(しゃがん|座って|すわって|かがん)/, 'sit'], [/(のび|伸び)/, 'stretch'], [/あくび/, 'yawn'], [/(指さし|ゆびさし)/, 'point'],
   [/(すねて|むくれて)/, 'sulk'], [/(きょろきょろ)/, 'look_around'], [/(足ぶみ|足踏み)/, 'march'], [/(かしげて|傾げて)/, 'tilt_head'], [/(きらきら|キラキラ)/, 'sparkle'],
-  [/ガッツポーズ|ファイト/, 'guts'], [/(応援|フレーフレー|がんばれ)/, 'cheer'], [/(ぴょんぴょん|ぴょこぴょこ)/, 'hop'],
+  [/(怖がって|こわがって|おばけ|お化け|幽霊|ゆうれい|ホラー|怖い|こわい)/, 'scared'], [/ガッツポーズ|ファイト/, 'guts'], [/(応援|フレーフレー|がんばれ)/, 'cheer'], [/(ぴょんぴょん|ぴょこぴょこ)/, 'hop'],
 ];
 let fastPlayed = '', actDecided = false;
 function fastActions(text) {

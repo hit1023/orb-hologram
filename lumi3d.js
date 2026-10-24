@@ -215,6 +215,16 @@ export function createLumi3D({ width = 560, height = 720 } = {}) {
       default: return talk ? [-0.5, s * (0.5 + talk * 0.2) + Math.sin(t * 6 + s) * 0.08] : [0, s * (0.16 + Math.sin(t * 1.7) * 0.03)];
     }
   };
+  // 電柱(怖がって隠れるときに、横からにゅっと出てくる)
+  const pole = new THREE.Group(); scene.add(pole); pole.visible = false;
+  const poleMat = new THREE.MeshStandardMaterial({ color: 0xa9b0d8, emissive: 0x30365f, roughness: 0.7 });
+  const insMat = new THREE.MeshStandardMaterial({ color: 0xd9f2ff, emissive: 0x3a5d70 });
+  mesh(new THREE.CylinderGeometry(0.34, 0.42, 12, 20), poleMat, pole, 0, 2.5, 0);
+  for (const [y, w] of [[4.25, 2.8], [3.75, 2.1]]) {
+    mesh(new THREE.BoxGeometry(w, 0.15, 0.22), poleMat, pole, 0, y, 0);
+    for (const sx of [-1, 1]) mesh(new THREE.CylinderGeometry(0.07, 0.09, 0.28, 10), insMat, pole, sx * (w / 2 - 0.15), y + 0.2, 0);
+  }
+  for (const y of [0.8, 2.2]) mesh(new THREE.CylinderGeometry(0.44, 0.44, 0.1, 20), insMat, pole, 0, y, 0);
   const cur = { hue: 190 };
 
   function render(p) {
@@ -222,7 +232,9 @@ export function createLumi3D({ width = 560, height = 720 } = {}) {
     const fx = p.fx || {};                           // 声の指示による動き(index.html の動きエンジンが作る)
     const sr = Math.sin(Math.min(fx.roll || 0, 1.6));    // 横になる(寝る・気絶)ときは、画面の中央に収まるよう寄せて、引く
     root.rotation.set(fx.bodyPitch || 0, p.spin + (fx.spinAdd || 0), fx.roll || 0);
-    root.position.x = sr * 2.1;
+    root.position.x = sr * 2.1 + (fx.hide || 0) * 0.45;
+    const pa = fx.pole || 0;                              // 電柱が出てくる量(0〜1)。右から滑り込み、手前に立つ
+    pole.visible = pa > 0.01; pole.position.set(4.4 - 3.4 * (1 - Math.pow(1 - pa, 3)), 0, 1.3);
     root.scale.set(1, 1 - (fx.squash || 0), 1);
     camera.position.z = 10.6 + (fx.jump || 0) * 2.0 + Math.abs(sr) * 3.2;     // 跳ぶときは少し引いて、画面の上に突き抜けないようにする(高く跳んで見える)
     root.position.y = Math.sin(t * 1.8) * 0.06 + (p.pose === 'happy' ? Math.abs(Math.sin(t * 5)) * 0.06 : 0) + (fx.jump || 0) + Math.abs(sr) * 1.0;

@@ -24,7 +24,7 @@ const TTS_PRIMARY = process.env.TTS_PRIMARY === 'cpu' ? 'cpu' : 'cloud';
 const EMOTIONS = ['neutral', 'happy', 'sad', 'surprised', 'angry', 'shy'];
 // ルミが演じられる動き。声での依頼(「右手をあげて」など)を AI が読み取って、この中から選ぶ
 const ACTIONS = ['raise_right', 'raise_left', 'raise_both', 'wave', 'clap', 'spin', 'jump', 'close_eyes', 'open_eyes', 'cry', 'laugh', 'angry', 'shy', 'bow', 'nod', 'shake_head', 'dance', 'sleep',
-  'wink_left', 'wink_right', 'peace', 'kiss', 'heart', 'shiver', 'sit', 'stretch', 'yawn', 'point', 'shrug', 'sulk', 'surprise', 'think', 'sway', 'march', 'banzai', 'faint', 'tilt_head', 'look_around', 'flap', 'sparkle', 'guts', 'cheer', 'hop', 'lower'];
+  'wink_left', 'wink_right', 'peace', 'kiss', 'heart', 'shiver', 'sit', 'stretch', 'yawn', 'point', 'shrug', 'sulk', 'surprise', 'think', 'sway', 'march', 'banzai', 'faint', 'tilt_head', 'look_around', 'flap', 'sparkle', 'guts', 'cheer', 'hop', 'lower', 'scared'];
 
 const SYSTEM = `あなたは「ルミ」。スマホとホログラムの板の中に住む、小さな星の妖精の女の子のAIキャラクターです。
 明るくて好奇心旺盛、ちょっと照れ屋で、話しかけてくれた人のことが大好きです。
@@ -39,7 +39,7 @@ const SYSTEM = `あなたは「ルミ」。スマホとホログラムの板の�
 emotionは返答の気持ちに合わせて選ぶ(うれしい=happy、残念=sad、驚き=surprised、むっとした=angry、照れ=shy、それ以外=neutral)。
 体を動かす依頼(「手をあげて」「くるくる回って」「泣いて」など)があったら、actionsに入れる。使える動き:
 raise_right(右手をあげる。ルミ自身の右手) raise_left(左手をあげる。ルミ自身の左手) raise_both(両手をあげる) wave(手をふる) clap(拍手) spin(くるくる回る) jump(ジャンプ) close_eyes(目を閉じる) open_eyes(目を開ける) cry(泣く) laugh(笑う) angry(怒る) shy(照れる) bow(おじぎ) nod(うなずく) shake_head(首をふる) dance(おどる) sleep(横になって寝る)
-wink_left(左目でウインク。ルミ自身の左目) wink_right(右目でウインク。ルミ自身の右目) peace(ピース) kiss(投げキス) heart(ハートを出す・ハートを作る) shiver(ぶるぶる震える・寒がる) sit(しゃがむ・かがむ・座る) stretch(のびをする) yawn(あくび) point(指さす) shrug(肩をすくめる・わからない) sulk(すねる・むくれる) surprise(驚く) think(考えるポーズ) sway(ゆらゆら揺れる) march(足ぶみ) banzai(万歳) faint(気絶する・倒れる) tilt_head(首をかしげる) look_around(きょろきょろする) flap(ぱたぱたする) sparkle(きらきらする) guts(ガッツポーズ) cheer(応援する) lower(手を下げる・おろす) hop(ぴょんぴょん跳ねる)
+wink_left(左目でウインク。ルミ自身の左目) wink_right(右目でウインク。ルミ自身の右目) peace(ピース) kiss(投げキス) heart(ハートを出す・ハートを作る) shiver(ぶるぶる震える・寒がる) sit(しゃがむ・かがむ・座る) stretch(のびをする) yawn(あくび) point(指さす) shrug(肩をすくめる・わからない) sulk(すねる・むくれる) surprise(驚く) think(考えるポーズ) sway(ゆらゆら揺れる) march(足ぶみ) banzai(万歳) faint(気絶する・倒れる) tilt_head(首をかしげる) look_around(きょろきょろする) flap(ぱたぱたする) sparkle(きらきらする) guts(ガッツポーズ) cheer(応援する) lower(手を下げる・おろす) scared(怖がって電柱に隠れる・おびえる) hop(ぴょんぴょん跳ねる)
 複数の依頼は言われた順に並べる(最大4つ)。この一覧にない動きは、いちばん近いものを選ぶ。
 依頼がなくても、相手の言葉に自然に反応して、動きを1つだけ付けてよい。例: ありがとう→bow、かわいい・すてき→shy、すごい・やったね→banzai、おやすみ→sleep、ねむい→yawn、寒い→shiver、わからない→shrug、びっくりする話→surprise、疲れた→sit、ほめられた→sparkle。
 ただし毎回は付けず、自然なときだけ(目安は3回に1回くらい)。普通の会話ではactionsは[]。
@@ -114,11 +114,11 @@ const ACTION_DESC = {
   bow: 'おじぎする', nod: 'うなずく', shake_head: '首をふる', dance: 'おどる', sleep: 'ねむる・横になって寝る・ごろんと寝転ぶ', wink_left: '左目でウインクする(ルミ自身の左目)', wink_right: '右目でウインクする(ルミ自身の右目)',
   peace: 'ピースする', kiss: '投げキスする', heart: 'ハートを出す・作る', shiver: 'ぶるぶる震える', sit: 'しゃがむ・かがむ・座る', stretch: 'のびをする', yawn: 'あくびをする',
   point: '指さす', shrug: '肩をすくめる', sulk: 'すねる・むくれる', surprise: '驚く', think: '考えるポーズをする', sway: 'ゆらゆら揺れる', march: '足ぶみする',
-  banzai: '万歳する', faint: '気絶する・倒れる', tilt_head: '首をかしげる', look_around: 'きょろきょろする', flap: 'ぱたぱたする', sparkle: 'きらきらする', guts: 'ガッツポーズをする', cheer: '応援する・手を交互にあげてがんばれと応援する', hop: 'ぴょんぴょん小さく跳ねる', lower: '手を下げる・おろす(あげている手を戻す)',
+  banzai: '万歳する', faint: '気絶する・倒れる', tilt_head: '首をかしげる', look_around: 'きょろきょろする', flap: 'ぱたぱたする', sparkle: 'きらきらする', guts: 'ガッツポーズをする', cheer: '応援する・手を交互にあげてがんばれと応援する', hop: 'ぴょんぴょん小さく跳ねる', lower: '手を下げる・おろす(あげている手を戻す)', scared: '怖がって電柱の陰に隠れる・おびえる',
 };
 const REACT_DESC = {   // 頼まれなくても、会話に自然に反応して出す動き
   bow: '感謝された・お礼を言われた', shy: 'かわいい・すてきとほめられた', banzai: 'うれしい報告・やったね・すごいと喜ぶ話', sparkle: 'ほめられた・楽しい話',
-  sleep: 'おやすみ・もう寝る', yawn: 'ねむい・夜ふかしの話', shiver: '寒い・凍える', shrug: 'わからない・困った', surprise: 'びっくりする話・意外な出来事', sit: '疲れた・ひと休みしたい',
+  sleep: 'おやすみ・もう寝る', scared: '怖い話・お化け・幽霊・ホラー・暗い夜道・こわい', yawn: 'ねむい・夜ふかしの話', shiver: '寒い・凍える', shrug: 'わからない・困った', surprise: 'びっくりする話・意外な出来事', sit: '疲れた・ひと休みしたい',
 };
 function jevQuestions() {
   const crit = { none: 'この番目に頼まれた動きはない(動きの依頼がない、またはそんな数の依頼はない)', ...ACTION_DESC };

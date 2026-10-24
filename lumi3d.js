@@ -232,7 +232,7 @@ export function createLumi3D({ width = 560, height = 720 } = {}) {
     const fx = p.fx || {};                           // 声の指示による動き(index.html の動きエンジンが作る)
     const sr = Math.sin(Math.min(fx.roll || 0, 1.6));    // 横になる(寝る・気絶)ときは、画面の中央に収まるよう寄せて、引く
     root.rotation.set(fx.bodyPitch || 0, p.spin + (fx.spinAdd || 0), fx.roll || 0);
-    root.position.x = sr * 2.1 + (fx.hide || 0) * 0.45;
+    root.position.x = sr * 2.1 + (fx.hide || 0) * 0.45 + (fx.shakeX || 0);
     const pa = fx.pole || 0;                              // 電柱が出てくる量(0〜1)。右から滑り込み、手前に立つ
     pole.visible = pa > 0.01; pole.position.set(4.4 - 3.4 * (1 - Math.pow(1 - pa, 3)), 0, 1.3);
     root.scale.set(1, 1 - (fx.squash || 0), 1);

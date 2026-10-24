@@ -163,8 +163,8 @@ export function createLumi3D({ width = 560, height = 720 } = {}) {
   const arms = [];
   for (const s of [-1, 1]) {
     const piv = new THREE.Group(); piv.position.set(s * 0.46, 1.5, 0); body.add(piv);
-    mesh(new THREE.CapsuleGeometry(0.12, 0.34, 6, 12), toon(COL.sleeve), piv, 0, -0.27, 0);
-    mesh(new THREE.SphereGeometry(0.12, 14, 10), toon(COL.skin), piv, 0, -0.62, 0);
+    mesh(new THREE.CapsuleGeometry(0.12, 0.46, 6, 12), toon(COL.sleeve), piv, 0, -0.35, 0);
+    mesh(new THREE.SphereGeometry(0.13, 14, 10), toon(COL.skin), piv, 0, -0.76, 0);
     arms.push({ piv, s });
   }
 
@@ -186,12 +186,21 @@ export function createLumi3D({ width = 560, height = 720 } = {}) {
 
   function render(p) {
     const t = p.time;
-    root.rotation.y = p.spin;
-    root.position.y = Math.sin(t * 1.8) * 0.06 + (p.pose === 'happy' ? Math.abs(Math.sin(t * 5)) * 0.06 : 0);
-    head.rotation.set(0.05 + Math.sin(t * 1.3) * 0.02, 0, p.tilt + Math.sin(t * 1.7) * 0.02);
+    const fx = p.fx || {};                           // 声の指示による動き(index.html の動きエンジンが作る)
+    root.rotation.set(fx.bodyPitch || 0, p.spin + (fx.spinAdd || 0), fx.roll || 0);
+    root.position.y = Math.sin(t * 1.8) * 0.06 + (p.pose === 'happy' ? Math.abs(Math.sin(t * 5)) * 0.06 : 0) + (fx.jump || 0);
+    head.rotation.set(0.05 + Math.sin(t * 1.3) * 0.02 + (fx.pitch || 0), fx.yaw || 0, p.tilt + Math.sin(t * 1.7) * 0.02);
     ahogePivot.rotation.z = -0.1 + Math.sin(t * 1.7) * 0.12; ahogeStar.rotation.y = t * 0.8;
     tails.forEach((piv, i) => { const s = i ? 1 : -1; piv.rotation.z = s * (0.12 + (Math.sin(t * 1.6 + i * 1.5) * 0.1) + p.talk * 0.05); piv.rotation.x = Math.sin(t * 1.3 + i) * 0.06; });
-    arms.forEach(({ piv, s }) => { const [rx, rz] = armPose(p.pose, s, t, p.talk); piv.rotation.x = lerp(piv.rotation.x, rx, 0.18); piv.rotation.z = lerp(piv.rotation.z, rz, 0.18); });
+    arms.forEach(({ piv, s }) => {
+      const ov = fx.arms && fx.arms[s < 0 ? 'L' : 'R'];                // 指示があれば、その腕はそのとおりに動かす
+      const [rx, rz] = ov || armPose(p.pose, s, t, p.talk);
+      const k = ov ? 0.3 : 0.18;
+      piv.rotation.x = lerp(piv.rotation.x, rx, k); piv.rotation.z = lerp(piv.rotation.z, rz, k);
+      // 頭が大きいので、腕をあげるときは肩を外側・手前に出して、頭の陰に隠れないようにする
+      piv.position.x = lerp(piv.position.x, s * (0.46 + ((ov && ov[2]) || 0)), 0.2);
+      piv.position.z = lerp(piv.position.z, (ov && ov[3]) || 0, 0.2);
+    });
     const sig = [p.eye, p.mouth, Math.round(p.open * 12), p.blink > 0.55 ? 1 : 0, Math.round(p.blush * 10), Math.round(p.brow * 8), Math.round(p.raise * 20), p.listening ? 1 : 0, p.tear ? Math.round(p.tear * 8) : 0, p.mouth === 'wavy' ? Math.round(t * 10) : 0].join('|');
     if (sig !== lastSig) { paintFace(fg, p); faceTex.needsUpdate = true; lastSig = sig; }
     renderer.render(scene, camera);

@@ -482,7 +482,8 @@ function drawMascot(R, time) {
   const p = PALETTE[state], k = 0.06;
   cur.h += (((p.h - cur.h + 540) % 360) - 180) * k; cur.h = (cur.h + 360) % 360;
   cur.s = lerp(cur.s, p.s, k); cur.l = lerp(cur.l, p.l, k);
-  const key = state === 'thinking' ? 'thinking' : emotion;
+  const fx = updateActions(time);
+  const key = state === 'thinking' ? 'thinking' : ((fx && fx.emo) || emotion);
   const e = EMO[key] || EMO.neutral;
   levelSmooth = lerp(levelSmooth, level, 0.3); const lv = levelSmooth;
   mc.blush = lerp(mc.blush, e.blush, 0.08); mc.brow = lerp(mc.brow, e.brow, 0.15); mc.raise = lerp(mc.raise, e.raise, 0.15);
@@ -627,6 +628,49 @@ function drawMascot(R, time) {
   drawTicker(R, time);
 }
 
+/* ===== ふるまい: 声で頼まれた動き(手をあげる・回る・泣く…)を順番に演じる =====
+   返答API が actions に動きの名前を入れて返す。話し始めるときに playActions() で受け取る */
+const ACT_DUR = { raise_right: 3, raise_left: 3, raise_both: 3, wave: 3, clap: 3, spin: 1.8, jump: 1.6, close_eyes: 4, open_eyes: 0.4,
+  cry: 4.5, laugh: 3.5, angry: 3.5, shy: 3.5, bow: 1.8, nod: 1.8, shake_head: 1.8, dance: 5, sleep: 5 };
+let actQueue = [], actCur = null, curFx = null, actFrame = -1;
+function playActions(list) { actQueue = (Array.isArray(list) ? list : []).filter(a => ACT_DUR[a] !== undefined).slice(0, 4); actCur = null; }
+const easeIO = x => x < 0.5 ? 2 * x * x : 1 - Math.pow(-2 * x + 2, 2) / 2;
+function actPose(n, u, d) {
+  const f = {}, s = Math.sin, PI = Math.PI, env = Math.max(0, Math.min(1, u / 0.3, (d - u) / 0.35));
+  switch (n) {
+    case 'raise_right': f.arms = { R: [0, 2.75, 0.7, 0.3] }; break;                       // 画面の右側の手
+    case 'raise_left': f.arms = { L: [0, -2.75, 0.7, 0.3] }; break;                       // 画面の左側の手
+    case 'raise_both': f.arms = { L: [0, -2.75, 0.7, 0.3], R: [0, 2.75, 0.7, 0.3] }; f.emo = 'happy'; break;
+    case 'wave': f.arms = { R: [0, 2.3 + s(u * 9) * 0.4, 0.7, 0.3] }; f.emo = 'happy'; break;
+    case 'clap': { const c = 0.45 - Math.abs(s(u * 10)) * 0.2; f.arms = { L: [-1.2, c], R: [-1.2, -c] }; f.emo = 'happy'; break; }
+    case 'spin': f.spinAdd = PI * 2 * easeIO(Math.min(1, u / d)); f.emo = 'happy'; break;
+    case 'jump': f.jump = Math.abs(s(u / d * PI * 2)) * 0.9; f.arms = { L: [0, -1.2, 0.3, 0.2], R: [0, 1.2, 0.3, 0.2] }; f.emo = 'happy'; break;
+    case 'close_eyes': f.closeEyes = true; break;
+    case 'open_eyes': break;
+    case 'cry': f.emo = 'sad'; f.arms = { L: [-2.2, 0.2], R: [-2.2, -0.2] }; f.pitch = 0.25 * env; f.roll = s(u * 16) * 0.02; f.closeEyes = (u % 1.2) > 0.9; break;
+    case 'laugh': f.emo = 'happy'; f.open = 0.5 + Math.abs(s(u * 9)) * 0.4; f.jump = Math.abs(s(u * 7)) * 0.12; f.pitch = -0.15 * env; f.arms = { L: [-0.9, 0.2], R: [-0.9, -0.2] }; break;
+    case 'angry': f.emo = 'angry'; f.arms = { L: [0, -0.6], R: [0, 0.6] }; f.yaw = s(u * 14) * 0.08; f.roll = s(u * 12) * 0.03; break;
+    case 'shy': f.emo = 'shy'; break;
+    case 'bow': f.bodyPitch = 0.6 * s(Math.min(1, u / d) * PI); break;
+    case 'nod': f.pitch = 0.28 * s(u * 9) * env; break;
+    case 'shake_head': f.yaw = 0.55 * s(u * 8) * env; break;
+    case 'dance': f.emo = 'happy'; f.roll = s(u * 4) * 0.12; f.yaw = s(u * 2) * 0.4; f.jump = Math.abs(s(u * 5)) * 0.1; f.arms = { L: [0, -(1.5 + s(u * 5) * 0.7), 0.5, 0.2], R: [0, 1.5 + s(u * 5 + 1) * 0.7, 0.5, 0.2] }; break;
+    case 'sleep': f.closeEyes = true; f.pitch = 0.3 * env; f.roll = s(u * 1.2) * 0.04; break;
+  }
+  return f;
+}
+function updateActions(time) {
+  if (actFrame === time) return curFx; actFrame = time;
+  for (let g = 0; g < 6; g++) {
+    if (!actCur) { if (!actQueue.length) { curFx = null; return null; } const n = actQueue.shift(); actCur = { n, t0: time, d: ACT_DUR[n] }; }
+    if (time - actCur.t0 < actCur.d) break;
+    actCur = null;
+  }
+  if (!actCur) { curFx = null; return null; }
+  curFx = actPose(actCur.n, time - actCur.t0, actCur.d);
+  return curFx;
+}
+
 /* ===== ルミ3D: lumi3d.js(three.js)で組み立てた立体のルミ。ゆっくり回り、話す・聞くときは正面を向く ===== */
 let spin3 = 0, lastT3 = 0, forceSpin = null;   // forceSpin: 確認用(?spin=角度)
 function drawMascot3D(R, time) {
@@ -635,7 +679,8 @@ function drawMascot3D(R, time) {
   const pal = PALETTE[state], k = 0.06;
   cur.h += (((pal.h - cur.h + 540) % 360) - 180) * k; cur.h = (cur.h + 360) % 360;
   cur.s = lerp(cur.s, pal.s, k); cur.l = lerp(cur.l, pal.l, k);
-  const key = state === 'thinking' ? 'thinking' : emotion;
+  const fx = updateActions(time);
+  const key = state === 'thinking' ? 'thinking' : ((fx && fx.emo) || emotion);
   const e = EMO[key] || EMO.neutral;
   levelSmooth = lerp(levelSmooth, level, 0.3); const lv = levelSmooth;
   mc.blush = lerp(mc.blush, e.blush, 0.08); mc.brow = lerp(mc.brow, e.brow, 0.15); mc.raise = lerp(mc.raise, e.raise, 0.15);
@@ -652,8 +697,8 @@ function drawMascot3D(R, time) {
   if (forceSpin !== null) spin3 = forceSpin;
   const speaking = state === 'speaking';
   const cvs = L.render({
-    time, spin: spin3, pose: key, eye: e.eye, mouth: e.mouth, open: speaking ? Math.max(0.1, lv) : 0,
-    blink, blush: mc.blush, brow: mc.brow, raise: mc.raise, tilt: mc.tilt, listening: state === 'listening',
+    time, spin: spin3, pose: key, eye: e.eye, mouth: e.mouth, open: (fx && fx.open !== undefined) ? fx.open : (speaking ? Math.max(0.1, lv) : 0),
+    fx, blink: (fx && fx.closeEyes) ? 1 : blink, blush: mc.blush, brow: mc.brow, raise: mc.raise, tilt: mc.tilt, listening: state === 'listening',
     talk: speaking ? 0.5 + lv : 0, tear: key === 'sad' ? 1 - ((time * 0.5) % 1) * 0.8 : 0,
   });
   ctx.save();
@@ -829,7 +874,7 @@ async function getReply(text) {
     return await r.json();
   }
   await new Promise(r => setTimeout(r, 900));
-  return { reply: DEMO[Math.floor(Math.random() * DEMO.length)], emotion: 'happy' };
+  return { reply: DEMO[Math.floor(Math.random() * DEMO.length)], emotion: 'happy', actions: [] };
 }
 async function handleUtterance(text) {
   if (state === 'thinking' || state === 'speaking') return;
@@ -840,12 +885,12 @@ async function handleUtterance(text) {
   try { out = await getReply(text); } catch (e) { out = { reply: 'ごめんね、うまくつながらなかったみたい。', emotion: 'sad' }; }
   chatHistory.push({ role: 'user', text }, { role: 'ai', text: out.reply });
   while (chatHistory.length > 16) chatHistory.shift();
-  speak(out.reply, out.emotion);
+  speak(out.reply, out.emotion, out.actions);
 }
 
 // --- 読み上げ(Aivis) → 再生音量でキャラを動かす ---
 let playing = null;
-async function speak(text, emo) {
+async function speak(text, emo, actions) {
   emotion = EMO[emo] ? emo : 'neutral';
   replyCap = { text, started: false, at: 0, dur: 0, endAt: 0 };
   setState('speaking'); log('ルミ: ' + text);
@@ -866,13 +911,13 @@ async function speak(text, emo) {
       level = Math.min(1, Math.sqrt(s / tb.length) * 4);
     }, 40);
     playing = src;
-    replyCap.dur = buf.duration * 900; replyCap.at = performance.now(); replyCap.started = true;
+    replyCap.dur = buf.duration * 900; replyCap.at = performance.now(); replyCap.started = true; playActions(actions);
     src.onended = () => { clearInterval(timer); done(); };
     src.start();
   } catch (e) {                                   // TTSが使えないときはブラウザの声で代用
     log('ルミ: ' + text + '\n(ブラウザの声で再生: ' + e.message + ')');
     const u = new SpeechSynthesisUtterance(text); u.lang = CONFIG.lang;
-    replyCap.dur = text.length * 170; replyCap.at = performance.now(); replyCap.started = true;
+    replyCap.dur = text.length * 170; replyCap.at = performance.now(); replyCap.started = true; playActions(actions);
     let env = 0; const timer = setInterval(() => { env = Math.random() < 0.35 ? 0.2 + Math.random() * 0.7 : env * 0.7; level = env; }, 90);
     u.onend = u.onerror = () => { clearInterval(timer); done(); };
     speechSynthesis.cancel(); speechSynthesis.speak(u);
@@ -899,6 +944,7 @@ try {   // 確認用: ?char=mascot3d&mode=plain&spin=1.57(回転を固定)
   if (qs.get('char')) $('char').value = qs.get('char');
   if (qs.get('mode')) $('mode').value = qs.get('mode');
   if (qs.get('spin') !== null) forceSpin = +qs.get('spin') || 0;
+  if (qs.get('act')) setTimeout(() => playActions(qs.get('act').split(',')), 800);   // 確認用: ?act=raise_right,spin
   if (qs.get('hideui')) { $('ui').classList.add('hidden'); $('log').classList.add('hidden'); }
 } catch (_) {}
 applyLogVisibility(); $('mode').addEventListener('change', applyLogVisibility); $('mode').addEventListener('input', applyLogVisibility);

@@ -15,6 +15,8 @@ const FALLBACK_ROUTER = (process.env.TTS_FALLBACK_URL || 'http://192.168.0.20:80
 const FALLBACK_SPEAKER_ID = +process.env.TTS_FALLBACK_SPEAKER_ID || 387889485;
 const TTS_TIMEOUT_MS = +process.env.TTS_TIMEOUT_MS || 8000;
 const EMOTIONS = ['neutral', 'happy', 'sad', 'surprised', 'angry', 'shy'];
+// ルミが演じられる動き。声での依頼(「右手をあげて」など)を AI が読み取って、この中から選ぶ
+const ACTIONS = ['raise_right', 'raise_left', 'raise_both', 'wave', 'clap', 'spin', 'jump', 'close_eyes', 'open_eyes', 'cry', 'laugh', 'angry', 'shy', 'bow', 'nod', 'shake_head', 'dance', 'sleep'];
 
 const SYSTEM = `あなたは「ルミ」。スマホとホログラムの板の中に住む、小さな星の妖精の女の子のAIキャラクターです。
 明るくて好奇心旺盛、ちょっと照れ屋で、話しかけてくれた人のことが大好きです。
@@ -22,8 +24,12 @@ const SYSTEM = `あなたは「ルミ」。スマホとホログラムの板の�
 - 返答は日本語のくだけた丁寧語で、1〜2文、全体で60文字以内。声に出して読むので、記号・絵文字・かっこ書きは使わない。
 - 知らないことは知らないと素直に言う。難しい話は短く言い換える。
 - 出力は次のJSONだけ。説明やコードブロックは付けない。
-{"reply":"返答の文章","emotion":"neutral|happy|sad|surprised|angry|shy のどれか1つ"}
-emotionは返答の気持ちに合わせて選ぶ(うれしい=happy、残念=sad、驚き=surprised、むっとした=angry、照れ=shy、それ以外=neutral)。`;
+{"reply":"返答の文章","emotion":"neutral|happy|sad|surprised|angry|shy のどれか1つ","actions":["動き",...]}
+emotionは返答の気持ちに合わせて選ぶ(うれしい=happy、残念=sad、驚き=surprised、むっとした=angry、照れ=shy、それ以外=neutral)。
+体を動かす依頼(「手をあげて」「くるくる回って」「泣いて」など)があったら、actionsに入れる。使える動き:
+raise_right(画面の右側の手をあげる) raise_left(画面の左側の手をあげる) raise_both(両手をあげる) wave(手をふる) clap(拍手) spin(くるくる回る) jump(ジャンプ) close_eyes(目を閉じる) open_eyes(目を開ける) cry(泣く) laugh(笑う) angry(怒る) shy(照れる) bow(おじぎ) nod(うなずく) shake_head(首をふる) dance(おどる) sleep(ねむる)
+複数の依頼は言われた順に並べる(最大4つ)。この一覧にない動きは、いちばん近いものを選ぶ。依頼がなければactionsは[]。
+動きの依頼のときのreplyは、動きに合う短い一言にする(例:「はーい！」「こうかな？」「えへへ」)。`;
 
 function buildPrompt(text, history) {
   const lines = (Array.isArray(history) ? history : []).slice(-8).map(h =>
@@ -54,10 +60,13 @@ function parseReply(raw) {
     try {
       const j = JSON.parse(m[0]);
       if (j && typeof j.reply === 'string' && j.reply.trim())
-        return { reply: j.reply.trim(), emotion: EMOTIONS.includes(j.emotion) ? j.emotion : 'neutral' };
+        return {
+          reply: j.reply.trim(), emotion: EMOTIONS.includes(j.emotion) ? j.emotion : 'neutral',
+          actions: (Array.isArray(j.actions) ? j.actions : []).filter(a => ACTIONS.includes(a)).slice(0, 4),
+        };
     } catch (_) { /* fall through */ }
   }
-  return { reply: raw.replace(/[`{}"]/g, '').slice(0, 120) || 'ごめんね、うまく考えられなかった。', emotion: 'neutral' };
+  return { reply: raw.replace(/[`{}"]/g, '').slice(0, 120) || 'ごめんね、うまく考えられなかった。', emotion: 'neutral', actions: [] };
 }
 
 const VOICE = {   // 感情ごとの声の調子(Aivisルーターの speed / intonation)
@@ -87,7 +96,7 @@ http.createServer(async (req, res) => {
       const t0 = Date.now();
       const raw = await runClaude(buildPrompt(text.slice(0, 500), history));
       const out = parseReply(raw);
-      console.log(`[chat] ${Date.now() - t0}ms ${out.emotion} ${out.reply}`);
+      console.log(`[chat] ${Date.now() - t0}ms ${out.emotion} [${out.actions}] ${out.reply}`);
       return send(res, 200, out);
     }
     if (req.method === 'POST' && req.url === '/api/tts') {

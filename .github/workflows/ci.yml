@@ -20,6 +20,7 @@ jobs:
           PY
           node --check /tmp/page.js
           node --check orb-api/server.js
+          cp lumi3d.js /tmp/lumi3d.mjs && node --check /tmp/lumi3d.mjs
       - name: Validate compose
         run: |
           touch .env   # 実際の .env(トークン)は git 管理外。CI ではダミーで検証する

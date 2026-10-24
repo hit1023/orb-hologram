@@ -9,6 +9,7 @@ services:
       - "8897:80"
     volumes:
       - ./index.html:/usr/share/nginx/html/index.html:ro
+      - ./lumi3d.js:/usr/share/nginx/html/lumi3d.js:ro
       - ./dancer-concept.png:/usr/share/nginx/html/dancer-concept.png:ro
       - ./avatar3d.bundle.js:/usr/share/nginx/html/avatar3d.bundle.js:ro
       - ./dancer-avatar.glb:/usr/share/nginx/html/dancer-avatar.glb:ro

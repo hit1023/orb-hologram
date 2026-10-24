@@ -3,6 +3,8 @@ services:
     image: nginx:alpine
     container_name: orb-hologram
     restart: unless-stopped
+    depends_on:
+      - orb-api
     ports:
       - "8897:80"
     volumes:
@@ -13,3 +15,16 @@ services:
       - ./dancer-motion.glb:/usr/share/nginx/html/dancer-motion.glb:ro
       - ./dancer.mp4:/usr/share/nginx/html/dancer.mp4:ro
       - ./nginx.conf:/etc/nginx/conf.d/default.conf:ro
+
+  orb-api:
+    build: ./orb-api
+    container_name: orb-api
+    restart: unless-stopped
+    env_file: .env
+    environment:
+      TTS_ROUTER_URL: http://192.168.0.20:8000
+    volumes:
+      - claude-config:/data/claude-config
+
+volumes:
+  claude-config:

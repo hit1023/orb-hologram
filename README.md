@@ -5,7 +5,8 @@ GPU なし・工作は最小限・スマホのブラウザだけで動くこと�
 
 ## できること
 
-- キャラクターを 3 種類から選べます: リング / ダンスする女の子 / 球体
+- キャラクターを 4 種類から選べます: **ルミ（かわいい星の妖精・既定）** / リング / ダンスする女の子 / 球体
+- ルミは AI（Claude）と会話します。返答の気持ちに合わせて表情・色・身ぶりが変わります（うれしい・かなしい・おどろき・おこる・てれる・考え中）
 - 4 つの状態で色と動きが変わります: 待機（青）・聞いている（緑）・考え中（紫）・話している（橙）
 - キャラの下に、決まった文章が左から右へ流れます
 - マイク音量・音声認識（Web Speech API）・文字入力に対応しています
@@ -66,9 +67,22 @@ docker compose restart
 
 画面の操作 UI も反射して浮いて見えます。実演のときは「UI を隠す」を押してください（画面をタップすると戻ります）。
 
-## 返答 API
+## AI会話（返答・声・認識）
 
-`index.html` の `CONFIG.chatEndpoint` が空のときは、デモの返答を返します。URL を入れると、`{ "text": "..." }` を POST し、`{ "reply": "..." }` を受け取ります。声は今のところブラウザの `speechSynthesis` による仮のものです。
+```
+ブラウザ ── /api/chat ──▶ orb-api ──▶ Claude Code CLI (haiku)  → {reply, emotion}
+        ── /api/tts  ──▶ orb-api ──▶ Aivis ルーター(:8000)   → mp3
+        ── /ws/stt   ──▶ hit-whisper-stt(:18010, ElevenLabs Scribe)
+```
+
+- `orb-api/` が返答（Claude Code CLI を headless で実行）と読み上げ（既存の Aivis ルーターへ中継）を担当します。
+- 音声認識は、既存の `hit-whisper-stt` の WebSocket（16kHz PCM）へ nginx 経由でつなぎます。
+- 認証は `.env` の `CLAUDE_CODE_OAUTH_TOKEN`（`claude setup-token` で発行）。`.env` は git に入れません。声は `TTS_SPEAKER_ID` で変えられます。
+- マイクは HTTPS が必要なので、`https://holo.s-quad.com/` で開きます。
+
+### 返答 API の仕様
+
+`POST /api/chat` に `{ "text": "...", "history": [...] }` を送ると、`{ "reply": "...", "emotion": "happy" }` が返ります。`CONFIG.chatEndpoint` を空にするとデモ返答になります。TTS が使えないときは、ブラウザの `speechSynthesis` で代用します。
 
 ## ファイル
 
@@ -76,7 +90,8 @@ docker compose restart
 |---|---|
 | `index.html` | 本体（描画・入力・状態管理） |
 | `dancer-concept.png` | ダンスキャラの透過画像（現在の表示に使用） |
-| `nginx.conf` / `docker-compose.yml` | 配信用の設定 |
+| `orb-api/` | 返答（Claude）と読み上げ（Aivis中継）の小さな API サーバー |
+| `nginx.conf` / `docker-compose.yml` | 配信と `/api` `/ws/stt` の中継設定 |
 | `HANDOFF.md` | 開発の引き継ぎメモ（設計・TODO・ハマりどころ） |
 | `hologram-deck.pptx` | 製作の紹介スライド |
 | `ASSET-LICENSE.txt` | 素材の出典とライセンス |
@@ -85,8 +100,7 @@ docker compose restart
 ## 今後
 
 - 基準デザインを保ったまま、ダンスをより本格的にする
-- 返答 API（Claude）と声（AivisSpeech など）をつなぎ、音量でキャラを動かす
-- HTTPS で公開してマイクを使えるようにする
+- ルミの独り言（話しかけられていないときの一言）や、会話の記憶
 - 板に映した実機で、文字の濃さ・リングの太さ・キャラの大きさを調整する
 
 詳しくは [HANDOFF.md](HANDOFF.md) を見てください。

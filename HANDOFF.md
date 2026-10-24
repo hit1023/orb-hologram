@@ -73,3 +73,10 @@ GPU なし・工作は最小限・スマホ単体で動くのが前提。
 ## 8. 関連資料
 - 作業ログ: `~/Library/CloudStorage/GoogleDrive-hitoshi.nakayama.1023@gmail.com/マイドライブ/DevLog/2026-10-24.md`
 - メモリ: `~/.claude/projects/-Volumes-USBSSD-docker/memory/project_orb-hologram.md`
+
+## 9. 追記 (2026-10-25): AI会話とキャラ「ルミ」
+- 新キャラ `mascot`「ルミ」(オリジナルの星の妖精、既定)を `drawMascot` で描画。感情 `EMO`(neutral/happy/sad/surprised/angry/shy/thinking)で表情・色・身ぶりが変わる。ダンスはしない。
+- 会話は `orb-api/` (Node, Claude Code CLI haiku) の `/api/chat` が `{reply, emotion}` を返す。読み上げは `/api/tts` が Aivis ルーター(h-1:8000, speaker 既定 まお あまあま)へ中継。認識は `/ws/stt` を hit-whisper-stt(ElevenLabs Scribe)へ nginx で中継。
+- マイクは `https://holo.s-quad.com/`(gate NPM → h-1:8897)で使う。HTTP の LAN アドレスでは使えない。
+- `.env`(CLAUDE_CODE_OAUTH_TOKEN)は h-1 にだけ置く。git には入れない。デプロイは `rsync` 後に `docker compose up -d --build --force-recreate`。
+- 未確認: 実機(スマホ)でのマイク認識の聞き取り精度、VAD の閾値(`onMicChunk`)調整。

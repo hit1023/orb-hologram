@@ -51,6 +51,7 @@ const CONFIG = {
   // 返答API: POST {text, history} → {reply, emotion}。TTS: POST {text, emotion} → mp3。STT: WebSocket(16kHz PCM)
   chatEndpoint: '/api/chat',
   ttsEndpoint: '/api/tts',
+  actEndpoint: '/api/act',       // 動きの判断(Jev)。キーがなければ source:'none' が返り、返答API(Claude)の判断を使う
   sttPath: '/ws/stt',
   lang: 'ja-JP',
 };
@@ -706,7 +707,7 @@ const FAST_ACTIONS = [
   [/(しゃがん|座って|すわって)/, 'sit'], [/(のび|伸び)/, 'stretch'], [/あくび/, 'yawn'], [/(指さし|ゆびさし)/, 'point'],
   [/(すねて|むくれて)/, 'sulk'], [/(きょろきょろ)/, 'look_around'], [/(足ぶみ|足踏み)/, 'march'], [/(かしげて|傾げて)/, 'tilt_head'], [/(きらきら|キラキラ)/, 'sparkle'],
 ];
-let fastPlayed = '';
+let fastPlayed = '', actDecided = false;
 function fastActions(text) {
   if (/(ないで|なくて|やめて|しないで|するな|じゃなくて)/.test(text)) return [];            // 否定・取り消しはAIに任せる
   const out = [];
@@ -932,7 +933,13 @@ async function handleUtterance(text) {
   if (state === 'thinking' || state === 'speaking') return;
   ensureAudio();
   setState('thinking'); level = 0; log('あなた: ' + text); setUserCap(text, false);
-  const fa = fastActions(text); fastPlayed = fa.join(','); if (fa.length) playActions(fa);   // すぐ動き始める
+  const fa = fastActions(text); fastPlayed = fa.join(','); actDecided = false; if (fa.length) playActions(fa);   // すぐ動き始める
+  fetch(CONFIG.actEndpoint, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ text }) })   // 動きの判断(Jev)を、返答の生成と並べて呼ぶ
+    .then(r => r.ok ? r.json() : null).catch(() => null).then(j => {
+      if (!j || j.source !== 'jev') return;                       // Jevが使えないときは、返答APIの動きを使う
+      actDecided = true;
+      if (!fa.length && j.actions.length) { playActions(j.actions); fastPlayed = j.actions.join(','); }
+    });
   clearTimeout(emotionTimer); emotion = 'neutral';
   let out;
   try { out = await getReply(text); } catch (e) { out = { reply: 'ごめんね、うまくつながらなかったみたい。', emotion: 'sad' }; }
@@ -964,13 +971,13 @@ async function speak(text, emo, actions) {
       level = Math.min(1, Math.sqrt(s / tb.length) * 4);
     }, 40);
     playing = src;
-    replyCap.dur = buf.duration * 900; replyCap.at = performance.now(); replyCap.started = true; if ((actions || []).join(',') !== fastPlayed) playActions(actions); fastPlayed = '';
+    replyCap.dur = buf.duration * 900; replyCap.at = performance.now(); replyCap.started = true; if (!actDecided && (actions || []).join(',') !== fastPlayed) playActions(actions); fastPlayed = '';
     src.onended = () => { clearInterval(timer); done(); };
     src.start();
   } catch (e) {                                   // TTSが使えないときはブラウザの声で代用
     log('ルミ: ' + text + '\n(ブラウザの声で再生: ' + e.message + ')');
     const u = new SpeechSynthesisUtterance(text); u.lang = CONFIG.lang;
-    replyCap.dur = text.length * 170; replyCap.at = performance.now(); replyCap.started = true; if ((actions || []).join(',') !== fastPlayed) playActions(actions); fastPlayed = '';
+    replyCap.dur = text.length * 170; replyCap.at = performance.now(); replyCap.started = true; if (!actDecided && (actions || []).join(',') !== fastPlayed) playActions(actions); fastPlayed = '';
     let env = 0; const timer = setInterval(() => { env = Math.random() < 0.35 ? 0.2 + Math.random() * 0.7 : env * 0.7; level = env; }, 90);
     u.onend = u.onerror = () => { clearInterval(timer); done(); };
     speechSynthesis.cancel(); speechSynthesis.speak(u);

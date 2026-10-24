@@ -73,6 +73,51 @@ function parseReply(raw) {
   return { reply: raw.replace(/[`{}"]/g, '').slice(0, 120) || 'ごめんね、うまく考えられなかった。', emotion: 'neutral', actions: [] };
 }
 
+
+// ---- Jev(TypeSafe の選択式モデル)で「動き」だけを速く判断する ----
+// 返事の文章は Claude、動きの判断は Jev。質問は並列に評価されるので、動きが3つあっても遅くならない。
+const JEV_KEY = process.env.TYPESAFE_API_KEY || '';
+const JEV_MODEL = process.env.JEV_MODEL || 'jev-latest';
+const ACTION_DESC = {
+  raise_right: '画面の右側の手をあげる', raise_left: '画面の左側の手をあげる', raise_both: '両手をあげる', wave: '手をふる', clap: '拍手する',
+  spin: 'くるくる回る', jump: 'ジャンプする', close_eyes: '目を閉じる', open_eyes: '目を開ける', cry: '泣く', laugh: '笑う', angry: '怒る', shy: '照れる',
+  bow: 'おじぎする', nod: 'うなずく', shake_head: '首をふる', dance: 'おどる', sleep: 'ねむる', wink_left: '画面の左の目でウインクする', wink_right: '画面の右の目でウインクする',
+  peace: 'ピースする', kiss: '投げキスする', heart: 'ハートを出す・作る', shiver: 'ぶるぶる震える', sit: 'しゃがむ・座る', stretch: 'のびをする', yawn: 'あくびをする',
+  point: '指さす', shrug: '肩をすくめる', sulk: 'すねる・むくれる', surprise: '驚く', think: '考えるポーズをする', sway: 'ゆらゆら揺れる', march: '足ぶみする',
+  banzai: '万歳する', faint: '気絶する・倒れる', tilt_head: '首をかしげる', look_around: 'きょろきょろする', flap: 'ぱたぱたする', sparkle: 'きらきらする',
+};
+const REACT_DESC = {   // 頼まれなくても、会話に自然に反応して出す動き
+  bow: '感謝された・お礼を言われた', shy: 'かわいい・すてきとほめられた', banzai: 'うれしい報告・やったね・すごいと喜ぶ話', sparkle: 'ほめられた・楽しい話',
+  sleep: 'おやすみ・もう寝る', yawn: 'ねむい・夜ふかしの話', shiver: '寒い・凍える', shrug: 'わからない・困った', surprise: 'びっくりする話・意外な出来事', sit: '疲れた・ひと休みしたい',
+};
+function jevQuestions() {
+  const crit = { none: 'この番目に頼まれた動きはない(動きの依頼がない、またはそんな数の依頼はない)', ...ACTION_DESC };
+  const q = {};
+  ['first', 'second', 'third'].forEach((ord, i) => {
+    q['act' + (i + 1)] = { type: 'choice', instructions: `ユーザーは、かわいいキャラクターに体の動きを頼んでいるか。頼まれた動きのうち、言われた順で${i + 1}番目のものはどれか`, criteria: crit };
+  });
+  q.react = { type: 'choice', instructions: 'ユーザーの言葉に、かわいいキャラクターが頼まれなくても自然にとる反応はどれか。ふつうの会話ならnone', criteria: { none: '特別な反応はいらない、ふつうの会話', ...REACT_DESC } };
+  return q;
+}
+async function jevAct(text) {
+  const r = await fetch('https://api.typesafe.ai/v1/systemone', {
+    method: 'POST', headers: { authorization: `Bearer ${JEV_KEY}`, 'content-type': 'application/json' },
+    body: JSON.stringify({ model: JEV_MODEL, state: text, questions: jevQuestions() }), signal: AbortSignal.timeout(5000),
+  });
+  if (!r.ok) throw new Error(`jev ${r.status} ${(await r.text()).slice(0, 200)}`);
+  const a = (await r.json()).answers || {};
+  const pick = (id, min) => {
+    const x = a[id]; if (!x || !x.choice || x.choice === 'none') return null;
+    const p = x.probabilities && typeof x.probabilities[x.choice] === 'number' ? x.probabilities[x.choice] : 1;
+    return p >= min ? x.choice : null;
+  };
+  const acts = [];
+  for (const id of ['act1', 'act2', 'act3']) { const c = pick(id, 0.5); if (c && ACTIONS.includes(c) && !acts.includes(c)) acts.push(c); else if (!c) break; }
+  let spontaneous = false;
+  if (!acts.length) { const c = pick('react', 0.6); if (c && ACTIONS.includes(c) && Math.random() < 0.6) { acts.push(c); spontaneous = true; } }
+  return { actions: acts, spontaneous };
+}
+
 const VOICE = {   // 感情ごとの声の調子(Aivisルーターの speed / intonation)
   happy: { speed: 1.05, intonation: 1.3 }, sad: { speed: 0.92, intonation: 0.9 },
   surprised: { speed: 1.08, intonation: 1.4 }, angry: { speed: 1.0, intonation: 1.2 },
@@ -103,6 +148,16 @@ http.createServer(async (req, res) => {
       console.log(`[chat] ${Date.now() - t0}ms ${out.emotion} [${out.actions}] ${out.reply}`);
       return send(res, 200, out);
     }
+    if (req.method === 'POST' && req.url === '/api/act') {          // 動きだけを速く判断する(Jev)。キーがなければ source:'none'
+      const { text } = await readJson(req);
+      if (!JEV_KEY || !text || typeof text !== 'string') return send(res, 200, { actions: [], source: 'none' });
+      const t0 = Date.now();
+      try {
+        const out = await jevAct(text.slice(0, 300));
+        console.log(`[act] ${Date.now() - t0}ms [${out.actions}]${out.spontaneous ? ' (自然な反応)' : ''}`);
+        return send(res, 200, { ...out, source: 'jev' });
+      } catch (e) { console.log(`[act] failed: ${e.message}`); return send(res, 200, { actions: [], source: 'none' }); }
+    }
     if (req.method === 'POST' && req.url === '/api/tts') {
       const { text, emotion } = await readJson(req);
       if (!text || typeof text !== 'string') return send(res, 400, { error: 'text required' });
@@ -129,4 +184,4 @@ http.createServer(async (req, res) => {
     console.error('[error]', e.message);
     send(res, 500, { error: e.message });
   }
-}).listen(PORT, () => console.log(`orb-api listening on ${PORT} (model=${MODEL}, speaker=${SPEAKER_ID}@${ROUTER}, fallback=${FALLBACK_SPEAKER_ID}@${FALLBACK_ROUTER})`));
+}).listen(PORT, () => console.log(`orb-api listening on ${PORT} (model=${MODEL}, jev=${JEV_KEY ? 'on' : 'off'}, speaker=${SPEAKER_ID}@${ROUTER}, fallback=${FALLBACK_SPEAKER_ID}@${FALLBACK_ROUTER})`));

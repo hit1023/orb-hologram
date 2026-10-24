@@ -143,3 +143,6 @@ docker compose restart
 ## ライセンスと素材
 
 素材の出典は [ASSET-LICENSE.txt](ASSET-LICENSE.txt) にまとめています。旧 3D モデルは CC-BY（Blender Foundation）、動画は Pexels ライセンス、Three.js は MIT です。
+
+## 返事の速さ(Cloudflare Workers AI)
+返事づくりは Cloudflare Workers AI(AI Gateway `orb-hologram` 経由、既定 llama-3.3-70b-fast、約1秒)が主で、失敗時は Claude CLI(約3秒)に自動で戻ります。声は Aivis Cloud が主、h-2 の CPU 版が予備(`TTS_PRIMARY=cpu` で逆転)。`.env` に `CLOUDFLARE_ACCOUNT_ID` / `CLOUDFLARE_API_TOKEN` / `CF_AI_GATEWAY_ID` を設定します。

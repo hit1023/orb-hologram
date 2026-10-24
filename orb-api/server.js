@@ -14,6 +14,13 @@ const SPEAKER_ID = +process.env.TTS_SPEAKER_ID || 888753762;
 const FALLBACK_ROUTER = (process.env.TTS_FALLBACK_URL || 'http://192.168.0.20:8000').replace(/\/$/, '');
 const FALLBACK_SPEAKER_ID = +process.env.TTS_FALLBACK_SPEAKER_ID || 387889485;
 const TTS_TIMEOUT_MS = +process.env.TTS_TIMEOUT_MS || 8000;
+// 返事は Cloudflare Workers AI(AI Gateway経由)が主。失敗したら Claude CLI へ戻す
+const CF_ACCOUNT = process.env.CLOUDFLARE_ACCOUNT_ID || '';
+const CF_TOKEN = process.env.CLOUDFLARE_API_TOKEN || '';
+const CF_MODEL = process.env.CF_CHAT_MODEL || '@cf/meta/llama-3.3-70b-instruct-fp8-fast';
+const CF_GATEWAY = process.env.CF_AI_GATEWAY_ID || '';
+// 声の主役: cloud=Aivis Cloud(速い) / cpu=h-2のCPU版(無料だが遅いことがある)。もう一方は予備
+const TTS_PRIMARY = process.env.TTS_PRIMARY === 'cpu' ? 'cpu' : 'cloud';
 const EMOTIONS = ['neutral', 'happy', 'sad', 'surprised', 'angry', 'shy'];
 // ルミが演じられる動き。声での依頼(「右手をあげて」など)を AI が読み取って、この中から選ぶ
 const ACTIONS = ['raise_right', 'raise_left', 'raise_both', 'wave', 'clap', 'spin', 'jump', 'close_eyes', 'open_eyes', 'cry', 'laugh', 'angry', 'shy', 'bow', 'nod', 'shake_head', 'dance', 'sleep',
@@ -56,6 +63,25 @@ function runClaude(prompt) {
       code === 0 ? resolve(out.trim()) : reject(new Error(`claude exit ${code}: ${err.slice(0, 300)}`));
     });
   });
+}
+
+async function runCloudflare(text, history) {
+  const msgs = [{ role: 'system', content: SYSTEM }];
+  for (const h of (Array.isArray(history) ? history : []).slice(-8))
+    msgs.push({ role: h.role === 'user' ? 'user' : 'assistant', content: String(h.text || '').slice(0, 300) });
+  msgs.push({ role: 'user', content: text });
+  const r = await fetch(`https://api.cloudflare.com/client/v4/accounts/${CF_ACCOUNT}/ai/run/${CF_MODEL}`, {
+    method: 'POST',
+    headers: { authorization: `Bearer ${CF_TOKEN}`, 'content-type': 'application/json', ...(CF_GATEWAY ? { 'cf-aig-gateway-id': CF_GATEWAY } : {}) },
+    body: JSON.stringify({ messages: msgs, max_tokens: 300, temperature: 0.7 }),
+    signal: AbortSignal.timeout(12000),
+  });
+  if (!r.ok) throw new Error(`cloudflare ${r.status}`);
+  const j = await r.json();
+  const res = j.result || {};
+  const out = res.response ?? res.choices?.[0]?.message?.content;
+  if (typeof out !== 'string' || !out.trim()) throw new Error('cloudflare empty');
+  return out.trim();
 }
 
 function parseReply(raw) {
@@ -147,9 +173,16 @@ http.createServer(async (req, res) => {
       const { text, history } = await readJson(req);
       if (!text || typeof text !== 'string') return send(res, 400, { error: 'text required' });
       const t0 = Date.now();
-      const raw = await runClaude(buildPrompt(text.slice(0, 500), history));
+      let raw, via = 'cf';
+      try {
+        if (!CF_ACCOUNT || !CF_TOKEN) throw new Error('no cloudflare key');
+        raw = await runCloudflare(text.slice(0, 500), history);
+      } catch (e) {
+        console.log(`[chat] cloudflare failed (${e.message}) -> claude`);
+        via = 'claude'; raw = await runClaude(buildPrompt(text.slice(0, 500), history));
+      }
       const out = parseReply(raw);
-      console.log(`[chat] ${Date.now() - t0}ms ${out.emotion} [${out.actions}] ${out.reply}`);
+      console.log(`[chat] ${via} ${Date.now() - t0}ms ${out.emotion} [${out.actions}] ${out.reply}`);
       return send(res, 200, out);
     }
     if (req.method === 'POST' && req.url === '/api/act') {          // 動きだけを速く判断する(Jev)。キーがなければ source:'none'
@@ -171,11 +204,13 @@ http.createServer(async (req, res) => {
         body: JSON.stringify({ text: text.slice(0, 300), speaker_id: id, ...(VOICE[emotion] || {}) }),
         signal: AbortSignal.timeout(ms),
       });
-      let r, via = 'cpu';
-      try { r = await synth(ROUTER, SPEAKER_ID, TTS_TIMEOUT_MS); if (!r.ok) throw new Error(`status ${r.status}`); }
-      catch (e) {   // CPU版が遅い/落ちているときはクラウド版へ(CPU側の処理は続くので、次回は速くなる)
-        console.log(`[tts] cpu failed (${e.message}) -> cloud`);
-        via = 'cloud'; r = await synth(FALLBACK_ROUTER, FALLBACK_SPEAKER_ID, 30000);
+      const cpu = [ROUTER, SPEAKER_ID, 'cpu'], cloud = [FALLBACK_ROUTER, FALLBACK_SPEAKER_ID, 'cloud'];
+      const [first, second] = TTS_PRIMARY === 'cloud' ? [cloud, cpu] : [cpu, cloud];
+      let r, via = first[2];
+      try { r = await synth(first[0], first[1], TTS_TIMEOUT_MS); if (!r.ok) throw new Error(`status ${r.status}`); }
+      catch (e) {   // 主が遅い/落ちているときは予備へ
+        console.log(`[tts] ${first[2]} failed (${e.message}) -> ${second[2]}`);
+        via = second[2]; r = await synth(second[0], second[1], 30000);
       }
       if (!r.ok) return send(res, 502, { error: `tts ${r.status}` });
       const buf = Buffer.from(await r.arrayBuffer());
@@ -188,4 +223,4 @@ http.createServer(async (req, res) => {
     console.error('[error]', e.message);
     send(res, 500, { error: e.message });
   }
-}).listen(PORT, () => console.log(`orb-api listening on ${PORT} (model=${MODEL}, jev=${JEV_KEY ? 'on' : 'off'}, speaker=${SPEAKER_ID}@${ROUTER}, fallback=${FALLBACK_SPEAKER_ID}@${FALLBACK_ROUTER})`));
+}).listen(PORT, () => console.log(`orb-api listening on ${PORT} (model=${MODEL}, chat=${CF_ACCOUNT && CF_TOKEN ? 'cf:' + CF_MODEL + (CF_GATEWAY ? '@' + CF_GATEWAY : '') : 'claude'}, tts=${TTS_PRIMARY}, jev=${JEV_KEY ? 'on' : 'off'}, speaker=${SPEAKER_ID}@${ROUTER}, fallback=${FALLBACK_SPEAKER_ID}@${FALLBACK_ROUTER})`));

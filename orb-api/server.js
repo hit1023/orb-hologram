@@ -24,7 +24,7 @@ const TTS_PRIMARY = process.env.TTS_PRIMARY === 'cpu' ? 'cpu' : 'cloud';
 const EMOTIONS = ['neutral', 'happy', 'sad', 'surprised', 'angry', 'shy'];
 // ルミが演じられる動き。声での依頼(「右手をあげて」など)を AI が読み取って、この中から選ぶ
 const ACTIONS = ['raise_right', 'raise_left', 'raise_both', 'wave', 'clap', 'spin', 'jump', 'close_eyes', 'open_eyes', 'cry', 'laugh', 'angry', 'shy', 'bow', 'nod', 'shake_head', 'dance', 'sleep',
-  'wink_left', 'wink_right', 'peace', 'kiss', 'heart', 'shiver', 'sit', 'stretch', 'yawn', 'point', 'shrug', 'sulk', 'surprise', 'think', 'sway', 'march', 'banzai', 'faint', 'tilt_head', 'look_around', 'flap', 'sparkle'];
+  'wink_left', 'wink_right', 'peace', 'kiss', 'heart', 'shiver', 'sit', 'stretch', 'yawn', 'point', 'shrug', 'sulk', 'surprise', 'think', 'sway', 'march', 'banzai', 'faint', 'tilt_head', 'look_around', 'flap', 'sparkle', 'guts', 'cheer', 'hop'];
 
 const SYSTEM = `あなたは「ルミ」。スマホとホログラムの板の中に住む、小さな星の妖精の女の子のAIキャラクターです。
 明るくて好奇心旺盛、ちょっと照れ屋で、話しかけてくれた人のことが大好きです。
@@ -39,7 +39,7 @@ const SYSTEM = `あなたは「ルミ」。スマホとホログラムの板の�
 emotionは返答の気持ちに合わせて選ぶ(うれしい=happy、残念=sad、驚き=surprised、むっとした=angry、照れ=shy、それ以外=neutral)。
 体を動かす依頼(「手をあげて」「くるくる回って」「泣いて」など)があったら、actionsに入れる。使える動き:
 raise_right(画面の右側の手をあげる) raise_left(画面の左側の手をあげる) raise_both(両手をあげる) wave(手をふる) clap(拍手) spin(くるくる回る) jump(ジャンプ) close_eyes(目を閉じる) open_eyes(目を開ける) cry(泣く) laugh(笑う) angry(怒る) shy(照れる) bow(おじぎ) nod(うなずく) shake_head(首をふる) dance(おどる) sleep(ねむる)
-wink_left(画面の左の目でウインク) wink_right(画面の右の目でウインク) peace(ピース) kiss(投げキス) heart(ハートを出す・ハートを作る) shiver(ぶるぶる震える・寒がる) sit(しゃがむ・座る) stretch(のびをする) yawn(あくび) point(指さす) shrug(肩をすくめる・わからない) sulk(すねる・むくれる) surprise(驚く) think(考えるポーズ) sway(ゆらゆら揺れる) march(足ぶみ) banzai(万歳) faint(気絶する・倒れる) tilt_head(首をかしげる) look_around(きょろきょろする) flap(ぱたぱたする) sparkle(きらきらする)
+wink_left(画面の左の目でウインク) wink_right(画面の右の目でウインク) peace(ピース) kiss(投げキス) heart(ハートを出す・ハートを作る) shiver(ぶるぶる震える・寒がる) sit(しゃがむ・座る) stretch(のびをする) yawn(あくび) point(指さす) shrug(肩をすくめる・わからない) sulk(すねる・むくれる) surprise(驚く) think(考えるポーズ) sway(ゆらゆら揺れる) march(足ぶみ) banzai(万歳) faint(気絶する・倒れる) tilt_head(首をかしげる) look_around(きょろきょろする) flap(ぱたぱたする) sparkle(きらきらする) guts(ガッツポーズ) cheer(応援する) hop(ぴょんぴょん跳ねる)
 複数の依頼は言われた順に並べる(最大4つ)。この一覧にない動きは、いちばん近いものを選ぶ。
 依頼がなくても、相手の言葉に自然に反応して、動きを1つだけ付けてよい。例: ありがとう→bow、かわいい・すてき→shy、すごい・やったね→banzai、おやすみ→sleep、ねむい→yawn、寒い→shiver、わからない→shrug、びっくりする話→surprise、疲れた→sit、ほめられた→sparkle。
 ただし毎回は付けず、自然なときだけ(目安は3回に1回くらい)。普通の会話ではactionsは[]。
@@ -113,7 +113,7 @@ const ACTION_DESC = {
   bow: 'おじぎする', nod: 'うなずく', shake_head: '首をふる', dance: 'おどる', sleep: 'ねむる', wink_left: '画面の左の目でウインクする', wink_right: '画面の右の目でウインクする',
   peace: 'ピースする', kiss: '投げキスする', heart: 'ハートを出す・作る', shiver: 'ぶるぶる震える', sit: 'しゃがむ・座る', stretch: 'のびをする', yawn: 'あくびをする',
   point: '指さす', shrug: '肩をすくめる', sulk: 'すねる・むくれる', surprise: '驚く', think: '考えるポーズをする', sway: 'ゆらゆら揺れる', march: '足ぶみする',
-  banzai: '万歳する', faint: '気絶する・倒れる', tilt_head: '首をかしげる', look_around: 'きょろきょろする', flap: 'ぱたぱたする', sparkle: 'きらきらする',
+  banzai: '万歳する', faint: '気絶する・倒れる', tilt_head: '首をかしげる', look_around: 'きょろきょろする', flap: 'ぱたぱたする', sparkle: 'きらきらする', guts: 'ガッツポーズをする', cheer: '応援する・手を交互にあげてがんばれと応援する', hop: 'ぴょんぴょん小さく跳ねる',
 };
 const REACT_DESC = {   // 頼まれなくても、会話に自然に反応して出す動き
   bow: '感謝された・お礼を言われた', shy: 'かわいい・すてきとほめられた', banzai: 'うれしい報告・やったね・すごいと喜ぶ話', sparkle: 'ほめられた・楽しい話',
@@ -129,6 +129,7 @@ function jevQuestions() {
   return q;
 }
 let lastSpont = 0;
+const ttsCache = new Map();
 async function jevAct(text) {
   const r = await fetch('https://api.typesafe.ai/v1/systemone', {
     method: 'POST', headers: { authorization: `Bearer ${JEV_KEY}`, 'content-type': 'application/json' },
@@ -202,6 +203,8 @@ http.createServer(async (req, res) => {
       const { text, emotion } = await readJson(req);
       if (!text || typeof text !== 'string') return send(res, 400, { error: 'text required' });
       const t0 = Date.now();
+      const ckey = `${emotion || ''}|${text}`;
+      if (ttsCache.has(ckey)) { res.writeHead(200, { 'content-type': 'audio/mpeg', 'cache-control': 'no-store' }); return res.end(ttsCache.get(ckey)); }
       const synth = (base, id, ms) => fetch(`${base}/speak`, {
         method: 'POST', headers: { 'content-type': 'application/json' },
         body: JSON.stringify({ text: text.slice(0, 300), speaker_id: id, ...(VOICE[emotion] || {}) }),
@@ -218,6 +221,7 @@ http.createServer(async (req, res) => {
       if (!r.ok) return send(res, 502, { error: `tts ${r.status}` });
       const buf = Buffer.from(await r.arrayBuffer());
       console.log(`[tts] ${via} ${Date.now() - t0}ms ${buf.length}B`);
+      if (text.length <= 12) { ttsCache.set(ckey, buf); if (ttsCache.size > 60) ttsCache.delete(ttsCache.keys().next().value); }   // 短い定型の一言だけ覚えておく
       res.writeHead(200, { 'content-type': 'audio/mpeg', 'cache-control': 'no-store' });
       return res.end(buf);
     }
@@ -226,4 +230,9 @@ http.createServer(async (req, res) => {
     console.error('[error]', e.message);
     send(res, 500, { error: e.message });
   }
-}).listen(PORT, () => console.log(`orb-api listening on ${PORT} (model=${MODEL}, chat=${CF_ACCOUNT && CF_TOKEN ? 'cf:' + CF_MODEL + (CF_GATEWAY ? '@' + CF_GATEWAY : '') : 'claude'}, tts=${TTS_PRIMARY}, jev=${JEV_KEY ? 'on' : 'off'}, speaker=${SPEAKER_ID}@${ROUTER}, fallback=${FALLBACK_SPEAKER_ID}@${FALLBACK_ROUTER})`));
+}).listen(PORT, () => {
+  // 定型の一言(index.htmlのACKS)の声を先に作っておく → 動きの依頼にすぐ声で答えられる
+  (async () => { for (const t of ['はーい！', 'こうかな？', 'えへへ、どうかな？', 'まかせて！', 'いくよー！']) {
+    try { await fetch(`http://127.0.0.1:${PORT}/api/tts`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ text: t, emotion: 'happy' }) }).then(r => r.arrayBuffer()); } catch (_) {} } })();
+  console.log(`orb-api listening on ${PORT} (model=${MODEL}, chat=${CF_ACCOUNT && CF_TOKEN ? 'cf:' + CF_MODEL + (CF_GATEWAY ? '@' + CF_GATEWAY : '') : 'claude'}, tts=${TTS_PRIMARY}, jev=${JEV_KEY ? 'on' : 'off'}, speaker=${SPEAKER_ID}@${ROUTER}, fallback=${FALLBACK_SPEAKER_ID}@${FALLBACK_ROUTER})`);
+});

@@ -222,7 +222,7 @@ http.createServer(async (req, res) => {
       if (!r.ok) return send(res, 502, { error: `tts ${r.status}` });
       const buf = Buffer.from(await r.arrayBuffer());
       console.log(`[tts] ${via} ${Date.now() - t0}ms ${buf.length}B`);
-      if (text.length <= 12) { ttsCache.set(ckey, buf); if (ttsCache.size > 60) ttsCache.delete(ttsCache.keys().next().value); }   // 短い定型の一言だけ覚えておく
+      if (text.length <= 16) { ttsCache.set(ckey, buf); if (ttsCache.size > 60) ttsCache.delete(ttsCache.keys().next().value); }   // 短い定型の一言だけ覚えておく
       res.writeHead(200, { 'content-type': 'audio/mpeg', 'cache-control': 'no-store' });
       return res.end(buf);
     }
@@ -233,7 +233,7 @@ http.createServer(async (req, res) => {
   }
 }).listen(PORT, () => {
   // 定型の一言(index.htmlのACKS)の声を先に作っておく → 動きの依頼にすぐ声で答えられる
-  (async () => { for (const t of ['はーい！', 'こうかな？', 'えへへ、どうかな？', 'まかせて！', 'いくよー！', 'うんうん']) {
+  (async () => { for (const t of ['はーい！', 'こうかな？', 'えへへ、どうかな？', 'まかせて！', 'いくよー！', 'うんうん', 'ふぁ…おやすみなさい', 'すぅ…おやすみ…', 'えっ、こわい話…？ひえぇ…', 'きゃー！こわいよー！', 'きゅぅ…', 'ばたん…', 'うぅ…ぐすん', 'あはは！', 'えへへ、あはは！', 'むーっ！', 'はーい', 'よいしょ…', 'ふぁぁ…ねむい…']) {
     try { await fetch(`http://127.0.0.1:${PORT}/api/tts`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ text: t, emotion: 'happy' }) }).then(r => r.arrayBuffer()); } catch (_) {} } })();
   console.log(`orb-api listening on ${PORT} (model=${MODEL}, chat=${CF_ACCOUNT && CF_TOKEN ? 'cf:' + CF_MODEL + (CF_GATEWAY ? '@' + CF_GATEWAY : '') : 'claude'}, tts=${TTS_PRIMARY}, jev=${JEV_KEY ? 'on' : 'off'}, speaker=${SPEAKER_ID}@${ROUTER}, fallback=${FALLBACK_SPEAKER_ID}@${FALLBACK_ROUTER})`);
 });

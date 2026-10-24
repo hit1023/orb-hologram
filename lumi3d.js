@@ -225,6 +225,18 @@ export function createLumi3D({ width = 560, height = 720 } = {}) {
     for (const sx of [-1, 1]) mesh(new THREE.CylinderGeometry(0.07, 0.09, 0.28, 10), insMat, pole, sx * (w / 2 - 0.15), y + 0.2, 0);
   }
   for (const y of [0.8, 2.2]) mesh(new THREE.CylinderGeometry(0.44, 0.44, 0.1, 20), insMat, pole, 0, y, 0);
+  // 怖がるとき、電柱のまわりをふよふよ漂うお化け(目と口は黒=ホログラムでは透けて、穴のように見える)
+  const ghosts = [];
+  { const gm = new THREE.MeshBasicMaterial({ color: 0xeaf6ff, transparent: true, opacity: 0.88 }), black = new THREE.MeshBasicMaterial({ color: 0x000000 });
+    for (let i = 0; i < 4; i++) {
+      const g = new THREE.Group(), sc = 0.8 + (i % 2) * 0.35;
+      mesh(new THREE.SphereGeometry(0.42, 16, 12), gm, g, 0, 0.25, 0);
+      mesh(new THREE.CylinderGeometry(0.42, 0.5, 0.62, 16), gm, g, 0, -0.06, 0);
+      for (let k = 0; k < 5; k++) mesh(new THREE.SphereGeometry(0.17, 8, 6), gm, g, Math.cos(k / 5 * Math.PI * 2) * 0.33, -0.4 - (k % 2) * 0.07, Math.sin(k / 5 * Math.PI * 2) * 0.33);
+      for (const sx of [-1, 1]) { const e = mesh(new THREE.SphereGeometry(0.09, 8, 8), black, g, sx * 0.16, 0.3, 0.37); e.scale.set(1, 1.5, 0.5); }
+      const mo = mesh(new THREE.SphereGeometry(0.1, 8, 8), black, g, 0, 0.06, 0.4); mo.scale.set(1, 1.3, 0.5);
+      g.scale.setScalar(sc); g.visible = false; scene.add(g); ghosts.push({ g, ph: i * 1.7, r: 1.5 + (i % 3) * 0.45, base: sc });
+    } }
   // 寝るとき、まくら・敷きぶとん・かけぶとんが、ぽんっと湧いてくる(横になった体の位置に合わせる)
   const bed = new THREE.Group(); bed.position.set(0.5, 0.6, 0); scene.add(bed); bed.visible = false;
   const bm = (c, e) => new THREE.MeshStandardMaterial({ color: c, emissive: e, roughness: 0.9 });
@@ -246,6 +258,13 @@ export function createLumi3D({ width = 560, height = 720 } = {}) {
     const ba = Math.max(0, Math.min(1, ((fx.bed || 0) - 0.3) / 0.7));              // 寝具が湧く量(ぽよんと弾みながら)
     bed.visible = ba > 0.02; bed.scale.setScalar(Math.max(0.001, easeBack(ba)));
     const pa = fx.pole || 0;                              // 電柱が出てくる量(0〜1)。右から滑り込み、手前に立つ
+    ghosts.forEach((o, i) => {                            // 電柱(x≈1.0)のまわりを、ふよふよ回りながら浮かぶ
+      o.g.visible = pa > 0.15;
+      if (!o.g.visible) return;
+      const a = t * 0.9 + o.ph;
+      o.g.position.set(1.0 + Math.cos(a) * o.r, 1.6 + Math.sin(t * 1.6 + o.ph) * 0.45 + i * 0.35, 0.4 + Math.sin(a) * 1.2);
+      o.g.rotation.z = Math.sin(t * 2 + o.ph) * 0.18; o.g.scale.setScalar(o.base * Math.min(1, (pa - 0.15) * 1.6));
+    });
     pole.visible = pa > 0.01; pole.position.set(4.4 - 3.4 * (1 - Math.pow(1 - pa, 3)), 0, 1.3);
     root.scale.set(1, 1 - (fx.squash || 0), 1);
     camera.position.z = 10.6 + (fx.jump || 0) * 2.0 + Math.abs(sr) * 3.2;     // 跳ぶときは少し引いて、画面の上に突き抜けないようにする(高く跳んで見える)

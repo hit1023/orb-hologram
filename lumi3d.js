@@ -59,7 +59,16 @@ function paintFace(g, p) {
     else if (m === 'wavy') { g.beginPath(); for (let i = -10; i <= 10; i++) { const x = i * 0.01, y = 0.1 + Math.sin(i * 0.5 + p.t * 8) * 0.015; i === -10 ? g.moveTo(x, y) : g.lineTo(x, y); } g.stroke(); }
     else { g.beginPath(); g.moveTo(-0.07, 0.1); g.lineTo(0.07, 0.1); g.stroke(); }
   }
-  if (p.tear) { g.fillStyle = `rgba(160,235,255,${p.tear})`; g.beginPath(); g.ellipse(-0.5, -0.05 + (1 - p.tear) * 0.3, 0.04, 0.07, 0, 0, Math.PI * 2); g.fill(); }
+  if (p.tear) {                                                              // 涙: 両目から2粒ずつ、順番に流れ落ちる
+    const ph0 = (1 - p.tear) / 0.8;
+    for (const sx2 of [-1, 1]) for (const k of [0, 0.5]) {
+      const ph = (ph0 + k) % 1;
+      g.fillStyle = `rgba(150,230,255,${Math.max(0, 1 - ph * 0.9)})`;
+      g.beginPath(); g.ellipse(sx2 * 0.5, 0.05 + ph * 0.6, 0.1, 0.17, 0, 0, Math.PI * 2); g.fill();
+    }
+    g.strokeStyle = 'rgba(150,230,255,0.45)'; g.lineWidth = 0.07;
+    for (const sx2 of [-1, 1]) { g.beginPath(); g.moveTo(sx2 * 0.5, 0.05); g.lineTo(sx2 * 0.5, 0.6); g.stroke(); }
+  }
   g.restore();
 }
 function eye(g, sx, p) {
@@ -213,6 +222,7 @@ export function createLumi3D({ width = 560, height = 720 } = {}) {
     const fx = p.fx || {};                           // 声の指示による動き(index.html の動きエンジンが作る)
     root.rotation.set(fx.bodyPitch || 0, p.spin + (fx.spinAdd || 0), fx.roll || 0);
     root.scale.set(1, 1 - (fx.squash || 0), 1);
+    camera.position.z = 10.6 + (fx.jump || 0) * 2.0;     // 跳ぶときは少し引いて、画面の上に突き抜けないようにする(高く跳んで見える)
     root.position.y = Math.sin(t * 1.8) * 0.06 + (p.pose === 'happy' ? Math.abs(Math.sin(t * 5)) * 0.06 : 0) + (fx.jump || 0);
     head.rotation.set(0.05 + Math.sin(t * 1.3) * 0.02 + (fx.pitch || 0), fx.yaw || 0, p.tilt + Math.sin(t * 1.7) * 0.02 + (fx.headRoll || 0));
     updateHearts(t, !!fx.hearts);
@@ -227,7 +237,7 @@ export function createLumi3D({ width = 560, height = 720 } = {}) {
       piv.position.x = lerp(piv.position.x, s * (0.46 + ((ov && ov[2]) || 0)), 0.2);
       piv.position.z = lerp(piv.position.z, (ov && ov[3]) || 0, 0.2);
     });
-    const sig = [p.wink || '', p.eye, p.mouth, Math.round(p.open * 12), p.blink > 0.55 ? 1 : 0, Math.round(p.blush * 10), Math.round(p.brow * 8), Math.round(p.raise * 20), p.listening ? 1 : 0, p.tear ? Math.round(p.tear * 8) : 0, p.mouth === 'wavy' ? Math.round(t * 10) : 0].join('|');
+    const sig = [p.wink || '', p.eye, p.mouth, Math.round(p.open * 12), p.blink > 0.55 ? 1 : 0, Math.round(p.blush * 10), Math.round(p.brow * 8), Math.round(p.raise * 20), p.listening ? 1 : 0, p.tear ? Math.round(p.tear * 20) : 0, p.mouth === 'wavy' ? Math.round(t * 10) : 0].join('|');
     if (sig !== lastSig) { paintFace(fg, p); faceTex.needsUpdate = true; lastSig = sig; }
     renderer.render(scene, camera);
     return renderer.domElement;

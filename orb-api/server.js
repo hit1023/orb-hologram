@@ -82,7 +82,8 @@ async function runCloudflare(text, history) {
   if (!r.ok) throw new Error(`cloudflare ${r.status}`);
   const j = await r.json();
   const res = j.result || {};
-  const out = res.response ?? res.choices?.[0]?.message?.content;
+  let out = res.response ?? res.choices?.[0]?.message?.content;
+  if (out && typeof out === 'object') out = JSON.stringify(out);   // JSONで答えると、Cloudflareが解析済みオブジェクトで返すことがある
   if (typeof out !== 'string' || !out.trim()) throw new Error('cloudflare empty');
   return out.trim();
 }
@@ -232,7 +233,7 @@ http.createServer(async (req, res) => {
   }
 }).listen(PORT, () => {
   // 定型の一言(index.htmlのACKS)の声を先に作っておく → 動きの依頼にすぐ声で答えられる
-  (async () => { for (const t of ['はーい！', 'こうかな？', 'えへへ、どうかな？', 'まかせて！', 'いくよー！']) {
+  (async () => { for (const t of ['はーい！', 'こうかな？', 'えへへ、どうかな？', 'まかせて！', 'いくよー！', 'うんうん']) {
     try { await fetch(`http://127.0.0.1:${PORT}/api/tts`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ text: t, emotion: 'happy' }) }).then(r => r.arrayBuffer()); } catch (_) {} } })();
   console.log(`orb-api listening on ${PORT} (model=${MODEL}, chat=${CF_ACCOUNT && CF_TOKEN ? 'cf:' + CF_MODEL + (CF_GATEWAY ? '@' + CF_GATEWAY : '') : 'claude'}, tts=${TTS_PRIMARY}, jev=${JEV_KEY ? 'on' : 'off'}, speaker=${SPEAKER_ID}@${ROUTER}, fallback=${FALLBACK_SPEAKER_ID}@${FALLBACK_ROUTER})`);
 });

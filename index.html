@@ -648,14 +648,14 @@ function actPose(n, u, d) {
     case 'wave': f.arms = { R: [0, 2.3 + s(u * 9) * 0.4, 0.7, 0.3] }; f.emo = 'happy'; break;
     case 'clap': { const c = 0.45 - Math.abs(s(u * 10)) * 0.2; f.arms = { L: [-1.2, c], R: [-1.2, -c] }; f.emo = 'happy'; break; }
     case 'spin': f.spinAdd = PI * 2 * easeIO(Math.min(1, u / d)); f.emo = 'happy'; break;
-    case 'jump': { const k = (u / d) * 2 % 1, air = Math.abs(s(k * PI)); f.jump = air * 1.5; f.squash = (k < 0.18 || k > 0.92) ? 0.22 : 0; f.arms = { L: [0, -(1.2 + air * 1.3), 0.4, 0.2], R: [0, 1.2 + air * 1.3, 0.4, 0.2] }; f.emo = 'happy'; break; }
+    case 'jump': { const k = (u / d) * 2 % 1, air = Math.abs(s(k * PI)); f.jump = air * 1.25; f.squash = (k < 0.18 || k > 0.92) ? 0.22 : 0; f.arms = { L: [0, -(1.2 + air * 1.3), 0.4, 0.2], R: [0, 1.2 + air * 1.3, 0.4, 0.2] }; f.emo = 'happy'; break; }
     case 'hop': f.jump = Math.abs(s(u * 7)) * 0.45; f.arms = { L: [0, -0.9, 0.2, 0.1], R: [0, 0.9, 0.2, 0.1] }; f.emo = 'happy'; break;
     case 'guts': f.emo = 'happy'; f.arms = { L: [0, -(2.0 + s(u * 10) * 0.15), 0.5, 0.2], R: [0, 2.0 + s(u * 10) * 0.15, 0.5, 0.2] }; f.jump = Math.abs(s(u * 5)) * 0.1; break;
     case 'cheer': f.emo = 'happy'; f.roll = s(u * 6) * 0.06; f.jump = Math.abs(s(u * 6)) * 0.12; f.arms = { L: [0, -(1.6 + s(u * 6) * 1.1), 0.5, 0.2], R: [0, 1.6 - s(u * 6) * 1.1, 0.5, 0.2] }; break;
     case 'close_eyes': f.closeEyes = true; break;
     case 'open_eyes': break;
     case 'cry': f.emo = 'sad'; f.arms = { L: [-2.2, 0.2], R: [-2.2, -0.2] }; f.pitch = 0.25 * env; f.roll = s(u * 16) * 0.02; f.closeEyes = (u % 1.2) > 0.9; break;
-    case 'laugh': f.emo = 'happy'; f.open = 0.5 + Math.abs(s(u * 9)) * 0.4; f.jump = Math.abs(s(u * 7)) * 0.12; f.pitch = -0.15 * env; f.arms = { L: [-0.9, 0.2], R: [-0.9, -0.2] }; break;
+    case 'laugh': f.emo = 'happy'; f.open = 0.6 + Math.abs(s(u * 9)) * 0.4; f.jump = Math.abs(s(u * 7)) * 0.2; f.pitch = -0.2 * env; f.roll = s(u * 7) * 0.1; f.sparkle = true; f.arms = { L: [0, -(0.9 + s(u * 7) * 0.4), 0.3, 0.2], R: [0, 0.9 - s(u * 7) * 0.4, 0.3, 0.2] }; break;
     case 'angry': f.emo = 'angry'; f.arms = { L: [0, -0.6], R: [0, 0.6] }; f.yaw = s(u * 14) * 0.08; f.roll = s(u * 12) * 0.03; break;
     case 'shy': f.emo = 'shy'; break;
     case 'bow': f.bodyPitch = 0.6 * s(Math.min(1, u / d) * PI); break;
@@ -703,7 +703,7 @@ function updateActions(time) {
 /* ===== 即時反応: はっきりした依頼は、AIの返事を待たずに、すぐ動き始める =====
    (AIの判断は約3秒かかるので、よくある言い回しだけ先に拾う。あいまいな言い方・否定形は、AIに任せる) */
 const FAST_ACTIONS = [
-  [/右手.{0,3}(あげ|上げ|挙げ)/, 'raise_right'], [/左手.{0,3}(あげ|上げ|挙げ)/, 'raise_left'], [/(両手|ばんざい|バンザイ|万歳)/, 'raise_both'],
+  [/(右手|みぎて|右の手).{0,3}(あげ|上げ|挙げ)/, 'raise_right'], [/(左手|ひだりて|左の手).{0,3}(あげ|上げ|挙げ)/, 'raise_left'], [/(両手|ばんざい|バンザイ|万歳)/, 'raise_both'],
   [/(手を?(ふ|振)って|バイバイ)/, 'wave'], [/拍手/, 'clap'], [/(くるくる|回って|まわって|回転)/, 'spin'], [/(ジャンプ|跳ん|飛んで|はねて)/, 'jump'],
   [/(目を?(瞑|つぶ|閉じ))/, 'close_eyes'], [/目を?(開け|あけ|ひらい)/, 'open_eyes'], [/(泣いて|なみだ|涙)/, 'cry'], [/(笑って|わらって)/, 'laugh'],
   [/(怒って|おこって)/, 'angry'], [/(おじぎ|お辞儀)/, 'bow'], [/(おどって|踊って|ダンス)/, 'dance'], [/(寝て|ねて|おやすみ)/, 'sleep'],
@@ -888,10 +888,10 @@ function onMicChunk(f32) {
     // 全二重: 話し中・考え中も聞き続け、はっきりした声が続いたら割り込む(自分の声の回り込みは、再生中の音量より大きいときだけ拾う)
     const pcm0 = downsample(f32, actx.sampleRate);
     vad.pre.push(pcm0); if (vad.pre.length > 12) vad.pre.shift();
-    const thr = Math.max(0.05, vad.floor * 6, state === 'speaking' ? outRms * 0.6 + 0.03 : 0);
+    const thr = Math.max(0.035, vad.floor * 4, state === 'speaking' ? outRms * 0.4 + 0.02 : 0);
     vad.barge = rms > thr ? (vad.barge || 0) + 1 : 0;
-    if (vad.barge >= 6) {                                        // 約0.25秒つづいたら割り込み
-      vad.barge = 0; stopSpeaking(); resetStt(false); setState('listening');
+    if (vad.barge >= 4) {                                        // 約0.17秒つづいたら割り込み
+      vad.barge = 0; stopSpeaking(); resetStt(false); setState('listening'); log('(割り込み)'); backchannel();
       vad.pre = vad.pre.slice(-10); beginUtterance(); vad.lastVoice = now;
     }
     return;
@@ -976,6 +976,15 @@ let curU = null, outRms = 0, playing = null, speakTimer = null, turn = 0;
 let duplex = true; try { duplex = localStorage.getItem('orb.duplex') !== '0'; } catch (_) {}
 try { if (new URLSearchParams(location.search).get('duplex') === '0') duplex = false; } catch (_) {}
 // 話している途中・考えている途中でも、声が聞こえたら割り込む(全二重)
+// 割り込まれたら「うんうん」と相づちを打つ(声は事前生成してあるので即座に出る。うなずきも付ける)
+let bcBuf = null;
+async function backchannel() {
+  playActions(['nod']);
+  try {
+    if (!bcBuf) { const r = await fetch(CONFIG.ttsEndpoint, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ text: 'うんうん', emotion: 'happy' }) }); bcBuf = await ensureAudio().decodeAudioData(await r.arrayBuffer()); }
+    const src = actx.createBufferSource(); src.buffer = bcBuf; const g = actx.createGain(); g.gain.value = 0.6; src.connect(g); g.connect(actx.destination); src.start();
+  } catch (_) {}
+}
 function stopSpeaking() {
   turn++;                                              // 古い返事・古いTTSの結果は捨てる
   clearInterval(speakTimer); speakTimer = null;

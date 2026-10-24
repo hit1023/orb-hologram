@@ -65,6 +65,9 @@ function paintFace(g, p) {
 function eye(g, sx, p) {
   const x = sx * 0.4, y = -0.28, k = p.eye;
   g.strokeStyle = DARK;
+  if (p.wink && ((p.wink === 'L' && sx < 0) || (p.wink === 'R' && sx > 0))) {           // ウインク(画面の左・右の目)
+    g.lineWidth = 0.065; g.beginPath(); g.arc(x, y + 0.06, 0.17, Math.PI * 1.1, Math.PI * 1.9); g.stroke(); return;
+  }
   if (k === 'happy') { g.lineWidth = 0.065; g.beginPath(); g.arc(x, y + 0.06, 0.17, Math.PI * 1.1, Math.PI * 1.9); g.stroke(); return; }
   if (p.blink > 0.55) { g.lineWidth = 0.055; g.beginPath(); g.arc(x, y - 0.04, 0.16, Math.PI * 0.15, Math.PI * 0.85); g.stroke(); return; }
   const rx = k === 'wide' ? 0.21 : 0.19;
@@ -168,6 +171,27 @@ export function createLumi3D({ width = 560, height = 720 } = {}) {
     arms.push({ piv, s });
   }
 
+  // ハート(投げキス・ハートを出す): ルミの前にふわっと浮かんで消える
+  const heartShape = new THREE.Shape();
+  heartShape.moveTo(0, -0.3); heartShape.bezierCurveTo(-0.55, 0.05, -0.3, 0.5, 0, 0.22); heartShape.bezierCurveTo(0.3, 0.5, 0.55, 0.05, 0, -0.3);
+  const heartGeo = new THREE.ExtrudeGeometry(heartShape, { depth: 0.08, bevelEnabled: true, bevelThickness: 0.03, bevelSize: 0.03, bevelSegments: 2 });
+  heartGeo.translate(0, 0, -0.04);
+  const heartMat = new THREE.MeshBasicMaterial({ color: 0xff5fa2 });
+  const hearts = []; let lastHeart = -9;
+  function updateHearts(t, on) {
+    if (on && t - lastHeart > 0.28) {
+      lastHeart = t; const m = new THREE.Mesh(heartGeo, heartMat); scene.add(m);
+      hearts.push({ m, t0: t, x: (Math.random() - 0.5) * 1.6, ph: Math.random() * 6 });
+    }
+    for (let i = hearts.length - 1; i >= 0; i--) {
+      const h = hearts[i], u = (t - h.t0) / 1.8;
+      if (u >= 1) { scene.remove(h.m); hearts.splice(i, 1); continue; }
+      h.m.position.set(h.x + Math.sin(u * 5 + h.ph) * 0.2, 2.2 + u * 1.9, 1.3);
+      const sc = 0.75 * Math.sin(Math.min(1, u * 3) * Math.PI / 2) * (1 - Math.max(0, u - 0.7) / 0.3); h.m.scale.setScalar(Math.max(0.001, sc));
+      h.m.rotation.y = Math.sin(u * 6 + h.ph) * 0.4;
+    }
+  }
+
   // ---- 毎フレームの更新 ----
   let lastSig = '';
   const lerp = (a, b, k) => a + (b - a) * k;
@@ -188,8 +212,10 @@ export function createLumi3D({ width = 560, height = 720 } = {}) {
     const t = p.time;
     const fx = p.fx || {};                           // 声の指示による動き(index.html の動きエンジンが作る)
     root.rotation.set(fx.bodyPitch || 0, p.spin + (fx.spinAdd || 0), fx.roll || 0);
+    root.scale.set(1, 1 - (fx.squash || 0), 1);
     root.position.y = Math.sin(t * 1.8) * 0.06 + (p.pose === 'happy' ? Math.abs(Math.sin(t * 5)) * 0.06 : 0) + (fx.jump || 0);
-    head.rotation.set(0.05 + Math.sin(t * 1.3) * 0.02 + (fx.pitch || 0), fx.yaw || 0, p.tilt + Math.sin(t * 1.7) * 0.02);
+    head.rotation.set(0.05 + Math.sin(t * 1.3) * 0.02 + (fx.pitch || 0), fx.yaw || 0, p.tilt + Math.sin(t * 1.7) * 0.02 + (fx.headRoll || 0));
+    updateHearts(t, !!fx.hearts);
     ahogePivot.rotation.z = -0.1 + Math.sin(t * 1.7) * 0.12; ahogeStar.rotation.y = t * 0.8;
     tails.forEach((piv, i) => { const s = i ? 1 : -1; piv.rotation.z = s * (0.12 + (Math.sin(t * 1.6 + i * 1.5) * 0.1) + p.talk * 0.05); piv.rotation.x = Math.sin(t * 1.3 + i) * 0.06; });
     arms.forEach(({ piv, s }) => {
@@ -201,7 +227,7 @@ export function createLumi3D({ width = 560, height = 720 } = {}) {
       piv.position.x = lerp(piv.position.x, s * (0.46 + ((ov && ov[2]) || 0)), 0.2);
       piv.position.z = lerp(piv.position.z, (ov && ov[3]) || 0, 0.2);
     });
-    const sig = [p.eye, p.mouth, Math.round(p.open * 12), p.blink > 0.55 ? 1 : 0, Math.round(p.blush * 10), Math.round(p.brow * 8), Math.round(p.raise * 20), p.listening ? 1 : 0, p.tear ? Math.round(p.tear * 8) : 0, p.mouth === 'wavy' ? Math.round(t * 10) : 0].join('|');
+    const sig = [p.wink || '', p.eye, p.mouth, Math.round(p.open * 12), p.blink > 0.55 ? 1 : 0, Math.round(p.blush * 10), Math.round(p.brow * 8), Math.round(p.raise * 20), p.listening ? 1 : 0, p.tear ? Math.round(p.tear * 8) : 0, p.mouth === 'wavy' ? Math.round(t * 10) : 0].join('|');
     if (sig !== lastSig) { paintFace(fg, p); faceTex.needsUpdate = true; lastSig = sig; }
     renderer.render(scene, camera);
     return renderer.domElement;

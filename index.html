@@ -632,12 +632,16 @@ function drawMascot(R, time) {
 
 /* ===== ふるまい: 声で頼まれた動き(手をあげる・回る・泣く…)を順番に演じる =====
    返答API が actions に動きの名前を入れて返す。話し始めるときに playActions() で受け取る */
-const ACT_DUR = { raise_right: 3, raise_left: 3, raise_both: 3, wave: 3, clap: 3, spin: 1.8, jump: 1.6, close_eyes: 4, open_eyes: 0.4,
+const ACT_DUR = { raise_right: 4, raise_left: 4, raise_both: 4, wave: 3, clap: 3, spin: 1.8, jump: 1.6, close_eyes: 4, open_eyes: 0.4,
   cry: 4.5, laugh: 3.5, angry: 3.5, shy: 3.5, bow: 1.8, nod: 1.8, shake_head: 1.8, dance: 5, sleep: 5,
   wink_left: 1.6, wink_right: 1.6, peace: 3, kiss: 2.6, heart: 3.5, shiver: 3.5, sit: 3.5, stretch: 3.5, yawn: 3.5, point: 2.5, shrug: 2.5, sulk: 3.5,
-  surprise: 2, think: 3.5, sway: 5, march: 4, banzai: 2.5, faint: 3.6, tilt_head: 2.5, look_around: 3.5, flap: 3.5, sparkle: 3, guts: 3, cheer: 3.5, hop: 3.5 };
+  surprise: 2, think: 3.5, sway: 5, march: 4, banzai: 2.5, faint: 3.6, tilt_head: 2.5, look_around: 3.5, flap: 3.5, sparkle: 3, guts: 3, cheer: 3.5, hop: 3.5, lower: 0.1 };
 let actQueue = [], actCur = null, curFx = null, actFrame = -1;
-function playActions(list) { actQueue = (Array.isArray(list) ? list : []).filter(a => ACT_DUR[a] !== undefined).slice(0, 4); actCur = null; }
+function playActions(list) {
+  list = Array.isArray(list) ? list : [];
+  if (list.includes('lower')) { actQueue = []; actCur = null; return; }   // 「手を下げて」: 動きを止めて、すぐ元の姿勢に戻す
+  actQueue = list.filter(a => ACT_DUR[a] !== undefined).slice(0, 4); actCur = null;
+}
 const easeIO = x => x < 0.5 ? 2 * x * x : 1 - Math.pow(-2 * x + 2, 2) / 2;
 function actPose(n, u, d) {
   const f = {}, s = Math.sin, PI = Math.PI, env = Math.max(0, Math.min(1, u / 0.3, (d - u) / 0.35));
@@ -683,6 +687,7 @@ function actPose(n, u, d) {
     case 'tilt_head': f.headRoll = 0.35 * env; break;
     case 'look_around': f.yaw = 0.7 * s(u * 2.4) * env; break;
     case 'flap': f.emo = 'happy'; f.jump = Math.abs(s(u * 6)) * 0.08; f.arms = { L: [0, -(1.2 + s(u * 12) * 0.5), 0.4, 0.2], R: [0, 1.2 + s(u * 12 + PI) * 0.5, 0.4, 0.2] }; break;
+    case 'lower': break;
     case 'sparkle': f.emo = 'happy'; f.sparkle = true; f.arms = { R: [0, 0.9] }; break;
     case 'sleep': f.closeEyes = true; f.pitch = 0.3 * env; f.roll = s(u * 1.2) * 0.04; break;
   }
@@ -703,6 +708,7 @@ function updateActions(time) {
 /* ===== 即時反応: はっきりした依頼は、AIの返事を待たずに、すぐ動き始める =====
    (AIの判断は約3秒かかるので、よくある言い回しだけ先に拾う。あいまいな言い方・否定形は、AIに任せる) */
 const FAST_ACTIONS = [
+  [/(手|うで|腕).{0,3}(さげ|下げ|おろ|降ろ|下ろ)/, 'lower'], [/^(手|てを).{0,2}(あげ|上げ|挙げ)/, 'raise_right'],
   [/(右手|みぎて|右の手).{0,3}(あげ|上げ|挙げ)/, 'raise_right'], [/(左手|ひだりて|左の手).{0,3}(あげ|上げ|挙げ)/, 'raise_left'], [/(両手|ばんざい|バンザイ|万歳)/, 'raise_both'],
   [/(手を?(ふ|振)って|バイバイ)/, 'wave'], [/拍手/, 'clap'], [/(くるくる|回って|まわって|回転)/, 'spin'], [/(ジャンプ|跳ん|飛んで|はねて)/, 'jump'],
   [/(目を?(瞑|つぶ|閉じ))/, 'close_eyes'], [/目を?(開け|あけ|ひらい)/, 'open_eyes'], [/(泣いて|なみだ|涙)/, 'cry'], [/(笑って|わらって)/, 'laugh'],
@@ -717,6 +723,7 @@ function fastActions(text) {
   if (/(ないで|なくて|やめて|しないで|するな|じゃなくて)/.test(text)) return [];            // 否定・取り消しはAIに任せる
   const out = [];
   for (const [re, a] of FAST_ACTIONS) if (re.test(text) && !out.includes(a)) out.push(a);
+  if (out.length > 1 && out.includes('lower')) out.splice(out.indexOf('lower'), 1);   // 「あげて、さげて」は、あげる(自動で戻る)
   return out.slice(0, 3);
 }
 

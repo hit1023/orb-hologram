@@ -96,76 +96,111 @@ function applyLogVisibility() { $('log').style.display = $('mode').value === 'pl
 function hsl(h, s, l, a) { return `hsla(${h},${s}%,${l}%,${a})`; }
 function lerp(a, b, k) { return a + (b - a) * k; }
 
-const TICKER_TEXT = 'HOLOGRAM AI  ・  こんにちは、話しかけてね  ・  ';
-let tickerText = TICKER_TEXT;
-
-/* ===== 大きな字幕: 話しかけた言葉(認識結果)と、案内・エラー。板で正しい向きに映る =====
-   ルミが話し始めるまでは字幕、話し始めたら返事が流れる帯に切り替える */
-let userCap = { text: '', at: -1e9, partial: false }, notice = { text: '', at: -1e9 }, speakAt = -1e9;
+/* ===== 字幕: 話しかけた言葉(認識結果)・ルミの返事・案内/エラー =====
+   板で正しい向きに映る(反転した空間で描く)。文字の大きさは言葉ごとにバラバラ。横スクロールはしない。
+   ルミが話し始めるまでは話しかけた言葉、話し始めたら返事を、声に合わせて少しずつ出す。 */
+const CAP_FONT = '"Hiragino Kaku Gothic ProN", "Noto Sans JP", sans-serif';
+let userCap = { text: '', at: -1e9, partial: false }, notice = { text: '', at: -1e9 };
+let replyCap = { text: '', started: false, at: 0, dur: 0, endAt: 0 };
 function setUserCap(t, partial) { userCap = { text: t, at: performance.now(), partial: !!partial }; }
 function setNotice(t) { notice = { text: t, at: performance.now() }; }
+
 function capInfo() {
   const now = performance.now();
-  if (now - notice.at < 6000) return { text: notice.text, life: 6000 - (now - notice.at), warn: true, partial: false };
+  if (now - notice.at < 6000) return { text: notice.text, life: 6000 - (now - notice.at), kind: 'notice', progress: 1 };
+  if (replyCap.text && replyCap.started) {
+    if (!replyCap.endAt) return { text: replyCap.text, life: 1e9, kind: 'reply', progress: replyCap.dur ? Math.min(1, (now - replyCap.at) / replyCap.dur) : 1 };
+    const left = 6000 - (now - replyCap.endAt);
+    if (left > 0) return { text: replyCap.text, life: left, kind: 'reply', progress: 1 };
+  }
   if (!userCap.text) return null;
   const age = now - userCap.at;
-  const show = state === 'speaking' ? now - speakAt < 2500
-    : (state === 'listening' || state === 'thinking') ? age < 20000 : age < 8000;
-  if (!show) return null;
-  const life = state === 'speaking' ? 2500 - (now - speakAt) : userCap.partial ? 4000 - age : 8000;
-  return life > 0 ? { text: userCap.text, life, warn: false, partial: userCap.partial } : null;
+  const waiting = state === 'thinking' || (state === 'speaking' && !replyCap.started);
+  const life = userCap.partial ? 4000 - age : waiting ? 1e9 : 6000 - age;
+  return life > 0 && age < 30000 ? { text: userCap.text, life, kind: 'user', progress: 1, partial: userCap.partial } : null;
 }
-function drawCaption(R, cap) {
-  const fs = Math.max(20, Math.min(R * 0.36, W * 0.07)), maxW = W * 0.86;
-  ctx.save();
-  ctx.font = `bold ${fs}px "Hiragino Kaku Gothic ProN", "Noto Sans JP", sans-serif`;
-  ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
-  const lines = []; let line = '';
-  for (const ch of cap.text.replace(/\n+/g, ' ')) {
-    if (ctx.measureText(line + ch).width > maxW && line) { lines.push(line); line = ch; } else line += ch;
+
+function hash32(s) { let h = 2166136261; for (const c of s) { h ^= c.codePointAt(0); h = Math.imul(h, 16777619); } return h >>> 0; }
+const segmenter = (typeof Intl !== 'undefined' && Intl.Segmenter) ? new Intl.Segmenter('ja', { granularity: 'word' }) : null;
+function splitChunks(text) {
+  const raw = [];
+  if (segmenter) for (const s of segmenter.segment(text)) raw.push(s.segment);
+  else { let i = 0; while (i < text.length) { const n = 2 + (hash32(text.slice(i, i + 3)) % 3); raw.push(text.slice(i, i + n)); i += n; } }
+  const out = [];
+  for (const c of raw) {                                            // 句読点は前の語に付ける。長すぎる語は分ける
+    if (/^[、。！？!?,.…・]+$/.test(c) && out.length) { out[out.length - 1] += c; continue; }
+    for (let i = 0; i < c.length; i += 6) out.push(c.slice(i, i + 6));
   }
-  lines.push(line);
-  const shown = lines.slice(-3), lh = fs * 1.35;
+  return out;
+}
+function chunkScale(chunk, idx, seed) {
+  const h = hash32(chunk + idx + seed), plain = chunk.replace(/[、。！？!?,.…・\s]/g, '');
+  if (!plain) return 1;
+  if (/^[぀-ゟ]+$/.test(plain) && plain.length <= 2) return 0.78 + (h % 10) / 100;   // 助詞など: 小さく
+  const r = (h % 100) / 100;
+  return /[一-鿿゠-ヿ0-9A-Za-z]/.test(plain) ? 1.15 + r * 0.55 : 0.9 + r * 0.35; // 漢字・カタカナ・英数: 大きく
+}
+const capCache = { key: '', lay: null };
+function layoutCaption(text, base, maxW) {
+  const key = `${text}|${Math.round(base)}|${Math.round(maxW)}`;
+  if (capCache.key === key) return capCache.lay;
+  const chunks = splitChunks(text.replace(/\n+/g, ' '));
+  let idx = 0;
+  const items = chunks.map((t, i) => {
+    const s = chunkScale(t, i, text.length);
+    ctx.font = `bold ${base * s}px ${CAP_FONT}`;
+    const it = { t, s, w: ctx.measureText(t).width, j: (hash32(t + i) % 100) / 100 - 0.5, start: idx };
+    idx += t.length; return it;
+  });
+  const lines = []; let line = { items: [], w: 0, s: 1 };
+  for (const it of items) {
+    if (line.items.length && line.w + it.w > maxW) { lines.push(line); line = { items: [], w: 0, s: 1 }; }
+    line.items.push(it); line.w += it.w; line.s = Math.max(line.s, it.s);
+  }
+  if (line.items.length) lines.push(line);
+  let y = 0;
+  for (const l of lines) { l.h = base * l.s * 1.3; l.y = y; y += l.h; }
+  capCache.key = key; capCache.lay = { lines, h: y, len: idx };
+  return capCache.lay;
+}
+
+function drawCaption(R, cap) {
+  let base = Math.max(18, Math.min(R * 0.30, W * 0.06));
+  const maxW = W * 0.88;
+  ctx.save();
+  ctx.textAlign = 'left'; ctx.textBaseline = 'alphabetic';
+  let lay = layoutCaption(cap.text, base, maxW);
+  while (lay.h > H * 0.34 && base > 14) { base *= 0.9; lay = layoutCaption(cap.text, base, maxW); }
   // 画面からはみ出さないように位置を調整する(板で上下反転していても、画面上の位置で判断)
-  let y0 = R * 2.35;
+  let top = R * 2.05;
   const m = ctx.getTransform(), d = m.d / DPR;
   if (Math.abs(d) > 0.001) {
     const scr = y => m.f / DPR + d * y;
-    const top = Math.min(scr(y0 - fs * 0.7), scr(y0 + (shown.length - 1) * lh + fs * 0.7));
-    const bot = Math.max(scr(y0 - fs * 0.7), scr(y0 + (shown.length - 1) * lh + fs * 0.7));
+    const a1 = scr(top), a2 = scr(top + lay.h), lo = Math.min(a1, a2), hi = Math.max(a1, a2);
     const limitBot = H - ($('ui').classList.contains('hidden') ? 10 : $('ui').offsetHeight + 10);
-    let shift = 0;                       // 画面上でずらしたい量(下が正)
-    if (bot > limitBot) shift = limitBot - bot; else if (top < 10) shift = 10 - top;
-    y0 += shift / d;
+    let shift = 0;
+    if (hi > limitBot) shift = limitBot - hi; else if (lo < 10) shift = 10 - lo;
+    top += shift / d;
   }
+  const n = Math.ceil(lay.len * cap.progress);                      // 返事は声に合わせて出す字数
   const a = Math.min(1, cap.life / 1200) * (cap.partial ? 0.8 : 1);
-  ctx.shadowColor = hsl(cur.h, 90, 70, a * 0.9); ctx.shadowBlur = fs * 0.4;
-  ctx.fillStyle = cap.warn ? `rgba(255,190,110,${a})` : hsl(cur.h, 35, 96, a);
-  shown.forEach((l, i) => ctx.fillText(l, 0, y0 + i * lh));
+  ctx.shadowColor = hsl(cur.h, 90, 70, a * 0.9); ctx.shadowBlur = base * 0.5;
+  for (const l of lay.lines) {
+    let x = -l.w / 2;
+    const bl = top + l.y + base * l.s * 1.0;
+    for (const it of l.items) {
+      if (it.start >= n) break;
+      const t = it.start + it.t.length <= n ? it.t : it.t.slice(0, n - it.start);
+      ctx.font = `bold ${base * it.s}px ${CAP_FONT}`;
+      ctx.fillStyle = cap.kind === 'notice' ? `rgba(255,190,110,${a})` : hsl(cur.h, it.s > 1.1 ? 70 : 25, it.s > 1.1 ? 90 : 96, a * (it.s < 0.95 ? 0.85 : 1));
+      ctx.fillText(t, x, bl + it.j * base * 0.25);
+      x += it.w;
+    }
+  }
   ctx.restore();
 }
-function drawTicker(R, time) {
-  const cap = capInfo();
-  if (cap) { drawCaption(R, cap); return; }   // 字幕が出ている間は、流れる帯を止める
-  // キャラと重ならない帯に、一定の文章を左から右へ流す(板の反射で正しい向きに読める)
-  const half = W * 0.45;
-  const fs = Math.max(16, R * 0.3);
-  ctx.font = `bold ${fs}px "Hiragino Kaku Gothic ProN", "Noto Sans JP", sans-serif`;
-  ctx.textAlign = 'left'; ctx.textBaseline = 'middle';
-  const unit = ctx.measureText(tickerText).width;
-  const off = (time * R * 0.9) % unit;                 // 右へ流れる
-  const y = R * 2.1;
-  const g = ctx.createLinearGradient(-half, 0, half, 0);
-  g.addColorStop(0, hsl(cur.h, cur.s, 85, 0));
-  g.addColorStop(0.12, hsl(cur.h, cur.s, 85, 0.95));
-  g.addColorStop(0.88, hsl(cur.h, cur.s, 85, 0.95));
-  g.addColorStop(1, hsl(cur.h, cur.s, 85, 0));
-  ctx.save();
-  ctx.beginPath(); ctx.rect(-half, y - fs, half * 2, fs * 2); ctx.clip();
-  ctx.fillStyle = g;
-  for (let x = -half - unit + off; x < half; x += unit) ctx.fillText(tickerText, x, y);
-  ctx.restore();
-}
+// 全キャラ共通で呼ばれる。字幕があるときだけ出す(流れる帯はなし)
+function drawTicker(R, time) { const cap = capInfo(); if (cap) drawCaption(R, cap); }
 
 function drawOrb(R, time) {
   // 呼び出し側で原点=球の中心にしてある
@@ -757,10 +792,10 @@ async function handleUtterance(text) {
 let playing = null;
 async function speak(text, emo) {
   emotion = EMO[emo] ? emo : 'neutral';
-  tickerText = text + '  ・  '; speakAt = performance.now();
+  replyCap = { text, started: false, at: 0, dur: 0, endAt: 0 };
   setState('speaking'); log('ルミ: ' + text);
   const done = () => {
-    level = 0; playing = null;
+    level = 0; playing = null; replyCap.endAt = performance.now();
     emotionTimer = setTimeout(() => { emotion = 'neutral'; }, 5000);
     if (micOn) { resetStt(); } else setState('idle');
   };
@@ -776,11 +811,13 @@ async function speak(text, emo) {
       level = Math.min(1, Math.sqrt(s / tb.length) * 4);
     }, 40);
     playing = src;
+    replyCap.dur = buf.duration * 900; replyCap.at = performance.now(); replyCap.started = true;
     src.onended = () => { clearInterval(timer); done(); };
     src.start();
   } catch (e) {                                   // TTSが使えないときはブラウザの声で代用
     log('ルミ: ' + text + '\n(ブラウザの声で再生: ' + e.message + ')');
     const u = new SpeechSynthesisUtterance(text); u.lang = CONFIG.lang;
+    replyCap.dur = text.length * 170; replyCap.at = performance.now(); replyCap.started = true;
     let env = 0; const timer = setInterval(() => { env = Math.random() < 0.35 ? 0.2 + Math.random() * 0.7 : env * 0.7; level = env; }, 90);
     u.onend = u.onerror = () => { clearInterval(timer); done(); };
     speechSynthesis.cancel(); speechSynthesis.speak(u);

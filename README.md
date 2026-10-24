@@ -9,21 +9,107 @@
 **ペッパーズゴースト（板の反射を使った簡易ホログラム）で見せることを前提に作った、AI チャットボットです。**
 普通のチャット画面ではなく、「板に映して空中に浮かぶ」ことを最初から設計に入れています。
 
-- **ホログラム向けの表示**: 板で上下が反転して見えるので、あらかじめ反転して描きます。黒背景に明るい色で描き、暗い反射でも見えやすくしています。
-- **AI と声で会話**: 話しかけると、AI（Claude）が返事をして、声で読み上げます。返事の気持ちに合わせて、キャラの表情・色・身ぶりが変わります。
+- **ホログラム向けの表示**: 板で上下が反転して見えるので、あらかじめ反転して描きます。黒背景に明るい色で描きます（黒は板で透明になります）。
+- **AI と声で会話**: 話しかけると AI が返事をして、声で読み上げます。**話している途中でも割り込めます（全二重）。**
+- **体で答える**: 「右手をあげて」「泣いて」「寝て」と頼むと、ルミが体を動かします。頼まなくても、会話に反応したり、ときどき自分から動いたりします。
 - **GPU なし・工作は最小限**: スマホのブラウザと、板・黒プラダンだけで動きます。材料は総額 300 円ほどです。
+
+## アーキテクチャ
+
+![アーキテクチャ図](docs/architecture.png)
+
+| 役割 | 使っている技術 | 備考 |
+|---|---|---|
+| 表示 | Canvas2D / three.js（3D のルミ） / ペッパーズゴースト | 単一ファイル `index.html`、GPU 不要 |
+| 公開 | gate の nginx-proxy-manager（`holo.s-quad.com`、HTTPS） | マイクは HTTPS が必須 |
+| 認識（STT） | ElevenLabs Scribe v2 Realtime（`hit-whisper-stt` 経由） | WebSocket で 16kHz PCM を送信。無料枠で運用 |
+| 返事 | Cloudflare Workers AI `llama-3.3-70b-instruct-fp8-fast`（AI Gateway `orb-hologram` 経由） | 約 1 秒。失敗時は Claude Code CLI（haiku、約 3 秒）に自動で戻る |
+| 動きの判断 | TypeSafe Jev | 非生成の選択式モデル。約 0.15 秒 |
+| 声（TTS） | Aivis Cloud API（主） / h-2 の Aivis CPU 版（予備） | 約 0.45 秒。短い定型の一言は事前に作って覚えておく |
+| CI/CD | GitHub Actions ＋ h-1 の cron（3 分ごとに自動デプロイ） | `/api/health` が通らなければ自動でロールバック |
+
+### 会話の流れ
+
+1. 声（PCM）を WSS で gate 経由 → h-1 の STT 中継 → ElevenLabs で文字起こし → 字幕に表示
+2. 同時に 2 本を並列で実行: **返事**（Cloudflare Workers AI、約 1 秒）と **動き**（Jev、約 0.15 秒）。はっきりした動きの依頼は、正規表現で即座に動き始めます
+3. 返事を Aivis Cloud で音声にして（約 0.45 秒）再生。口パク・字幕・動きを同時に演じます
+4. 話し中・考え中もマイクを聞き続け、声が続けば割り込みます（「うんうん」と相づち）
+
+往復の目安は **約 1.5〜2 秒** です。
 
 ## できること
 
-- キャラクターを 5 種類から選べます: **ルミ3D（立体で回る・既定）** / ルミ（平ら）/ リング / ダンスする女の子 / 球体
-- ルミは AI（Claude）と会話します。返答の気持ちに合わせて表情・色・身ぶりが変わります（うれしい・かなしい・おどろき・おこる・てれる・考え中）
-- どのキャラでも、話す・聞く・考えるに合わせて色と動きが変わり、返事の文章が下の帯に流れます
-- 4 つの状態で色と動きが変わります: 待機（青）・聞いている（緑）・考え中（紫）・話している（橙）
-- キャラの下に、決まった文章が左から右へ流れます
-- マイクでの音声会話（音声認識は hit-whisper-stt）と、文字入力に対応しています
-- 表示モードを切り替えられます: `plain`（画面確認用）/ `board`（斜め板・上下反転）/ `pyramid`（4 方向）
+- **キャラクター 5 種**: ルミ 3D（既定） / ルミ（平ら） / リング / ダンスする女の子 / 球体
+- **表情**: うれしい・かなしい・おどろき・おこる・てれる・考え中。返事の気持ちに合わせて変わります
+- **表示モード**: `plain`（画面確認用）/ `board`（斜め板・上下反転）/ `pyramid`（4 方向）
+- **声で動きを頼む（約 50 種類）**: 下の「声で動きを頼む」を見てください
+- **全二重（割り込み）**: ルミが話している途中や、考えている途中に話しかけると、すぐに止めて聞きます。画面の「割込: ON/OFF」で切り替えられます
+- **自発行動**: 静かなときに、約 45〜135 秒ごとに、きょろきょろ・あくび・ゆらゆら・首かしげ・きらきら、まれにばたっと倒れます（`?idle=0` で止められます）
 
-`index.html` 1 枚（Canvas 2D）で動きます。
+## 声で動きを頼む
+
+話しかけた言葉の意味を AI が読み取って、ルミの体を動かします。決まった合言葉ではなく、自然な言い方で頼めます。
+
+- 例: 「右手をあげて」「くるくる回って、そのあとジャンプして」「手を下げて」「しゃがんで」「寝て」「泣いて」「怖い話するね」
+- **右手・左手は、ルミ自身の右手・左手**です（向かい合っているので、画面では左右が逆に見えます）。「手をあげて」だけなら右手です
+- 手をあげたあとは、4 秒ほどで自動で下がります。「手を下げて」ですぐに下げることもできます
+- 2 つ以上頼むと、言った順に演じます
+
+### 動き一覧
+
+| 種類 | 動き |
+|---|---|
+| 手・腕 | 右手 / 左手 / 両手をあげる、手を下げる、手をふる、拍手、ピース、指さす、ガッツポーズ、応援 |
+| 全身 | くるくる回る、ジャンプ、ぴょんぴょん、しゃがむ、のび、おじぎ、おどる、万歳、足ぶみ、ゆらゆら |
+| 表情・感情 | 泣く（涙）、笑う、怒る、照れる、驚く、考える、すねる、あくび、ウインク（左右）、投げキス、ハート |
+| 大きな演出 | **寝る**（横になり、まくら・敷きぶとん・かけぶとんが湧く）、**怖がる**（電柱が出てきて陰に隠れ、ブルブル震え、冷や汗、お化けがふよふよ浮かぶ）、気絶（ばたっと倒れる）、ぶるぶる震える |
+| 首・目 | うなずく、首をふる、首をかしげる、きょろきょろ、目を閉じる・開ける、ぱたぱた、きらきら |
+
+### 速さの工夫
+
+- **正規表現の即時反応**: はっきりした依頼（「右手をあげて」「ジャンプして」など）は、AI を待たずに動き始めます（`fastActions`）。否定形（「泣かないで」）やあいまいな言い方は、AI に任せます
+- **Jev**: 動きの判断だけを TypeSafe の選択式モデル「Jev」に任せます（`/api/act`）。返事の生成と並べて呼ぶので、動きが早く始まります。`.env` に `TYPESAFE_API_KEY` を入れると有効になります。ないとき・失敗したときは、返事 AI の判断に戻ります
+- **定型の一言**: 短い動きの依頼には、動きに合った一言（寝る→「ふぁ…おやすみなさい」、怖がる→「きゃー！こわいよー！」など）で即答します。声は起動時に作って覚えてあるので、待たされません
+- **音声認識の聞き間違いの補正**: 動きの言葉に限って、聞き間違い（「みぎて」→「右手」、「ぐるぐる」→「くるくる」など）を直します。話し終わりの判定は、無音 1.4 秒（`?silence=ミリ秒` で変えられます）です
+
+### 仕組み
+
+`/api/chat` が `{reply, emotion, actions}` を返し、`index.html` の動きエンジン（`actPose`）が 3D のルミ（`lumi3d.js`）に演じさせます。動きを増やすには、`orb-api/server.js` の `ACTIONS` と説明、`index.html` の `ACT_DUR`・`actPose`（必要なら `FAST_ACTIONS`）に足します。
+
+確認用の URL: `?char=mascot3d&mode=plain&hideui=1&act=scared` のように付けると、文字を打たなくても動きを確認できます。ほかに `idlefast=1`（自発行動を速く）、`idle=0`（自発行動を止める）、`duplex=0`（割り込みを切る）があります。
+
+## AI 会話（返答・声・認識）
+
+```
+ブラウザ ── /api/chat ──▶ orb-api ──▶ Cloudflare Workers AI（失敗時 Claude Code CLI） → {reply, emotion, actions}
+        ── /api/act  ──▶ orb-api ──▶ TypeSafe Jev                                     → {actions}
+        ── /api/tts  ──▶ orb-api ──▶ Aivis ルーター(:8000) → Aivis Cloud(主) / h-2 CPU 版(予備) → mp3
+        ── /ws/stt   ──▶ hit-whisper-stt(:18010, ElevenLabs Scribe)
+```
+
+- `orb-api/`（Node、依存なし）が、返答・動きの判断・読み上げを担当します。
+- 返答は、Cloudflare Workers AI（AI Gateway `orb-hologram` 経由）が主です。Cloudflare の応答が空・失敗のときは、Claude Code CLI（haiku）に自動で戻ります。
+- 声は、Aivis Cloud が主、h-2 の CPU 版が予備です（`TTS_PRIMARY=cpu` で逆にできます）。短い定型の一言は、起動時に作ってメモリに覚えます。
+- 音声認識は、既存の `hit-whisper-stt` の WebSocket（16kHz PCM）へ nginx 経由でつなぎます。
+- マイクは HTTPS が必要なので、`https://holo.s-quad.com/` で開きます。
+
+### 設定（`.env`）
+
+`.env` は git に入れません。h-1 にだけ置きます。
+
+| 変数 | 内容 |
+|---|---|
+| `CLOUDFLARE_ACCOUNT_ID` / `CLOUDFLARE_API_TOKEN` | Cloudflare Workers AI（返事） |
+| `CF_AI_GATEWAY_ID` | AI Gateway の名前（`orb-hologram`） |
+| `CF_CHAT_MODEL` | 返事のモデル（既定 `@cf/meta/llama-3.3-70b-instruct-fp8-fast`） |
+| `CLAUDE_CODE_OAUTH_TOKEN` | 予備の返事（`claude setup-token` で発行） |
+| `TYPESAFE_API_KEY` | Jev（動きの判断、任意） |
+| `TTS_PRIMARY` | `cloud`（既定）または `cpu` |
+| `TTS_SPEAKER_ID` / `TTS_FALLBACK_SPEAKER_ID` | 声（CPU 版 / クラウド版） |
+
+### 返答 API の仕様
+
+`POST /api/chat` に `{ "text": "...", "history": [...] }` を送ると、`{ "reply": "...", "emotion": "happy", "actions": [] }` が返ります。`CONFIG.chatEndpoint` を空にするとデモ返答になります。TTS が使えないときは、ブラウザの `speechSynthesis` で代用します。
 
 ## 動かし方
 
@@ -41,19 +127,11 @@ python3 -m http.server 8000
 docker compose up -d
 ```
 
-`http://<ホスト>:8897/` で開けます。
-
-`index.html` など個別のファイルを bind mount しているので、ファイルを差し替えたあとは再起動が必要です。
-
-```bash
-docker compose restart
-```
-
-マウントするファイルを増やしたときは `docker compose up -d --force-recreate` にします。
+`http://<ホスト>:8897/` で開けます。`orb-api` のソースはイメージに入るので、変更したら `docker compose up -d --build` にします。`index.html` などは bind mount なので、差し替えたあとは `--force-recreate` が確実です。
 
 ### マイクを使うとき
 
-マイクの利用には HTTPS が必要です。HTTP の LAN アドレスでは使えません。音声認識は Chrome（Android）を推奨します。Brave は非対応です。
+マイクの利用には HTTPS が必要です。HTTP の LAN アドレスでは使えません。音声認識は Chrome（Android / iOS Safari）で確認しています。Brave は非対応です。スマホのスピーカーとマイクが近いと、ルミ自身の声を拾って割り込むことがあります。そのときは音量を下げるか、「割込: OFF」にしてください。
 
 ## 工作
 
@@ -76,86 +154,43 @@ docker compose restart
 板で反射すると、画面の**上下が反転**して見えます（左右は反転しません）。
 そのため `board` モードでは `ctx.scale(1, -1)` した座標空間で描きます。この空間で普通に文字やキャラを描けば、板に映ったときに正しい向きになります。この空間では y+ が空中の「下」にあたり、頭は y < 0 に描きます。
 
+黒は板で透明になるので、頭や髪の後ろに隠れる動き（敬礼など）は見えません。腕が頭の横や上に出る動きなら見えます。
+
 画面の操作 UI も反射して浮いて見えます。実演のときは「UI を隠す」を押してください（画面をタップすると戻ります）。
-
-## AI会話（返答・声・認識）
-
-```
-ブラウザ ── /api/chat ──▶ orb-api ──▶ Claude Code CLI (haiku)  → {reply, emotion}
-        ── /api/tts  ──▶ orb-api ──▶ Aivis ルーター(:8000)   → mp3
-        ── /ws/stt   ──▶ hit-whisper-stt(:18010, ElevenLabs Scribe)
-```
-
-- `orb-api/` が返答（Claude Code CLI を headless で実行）と読み上げ（既存の Aivis ルーターへ中継）を担当します。読み上げは、GPU なしで動く CPU 版 Aivis を主に使い、遅いときだけ Aivis Cloud 版に切り替えます。
-- 音声認識は、既存の `hit-whisper-stt` の WebSocket（16kHz PCM）へ nginx 経由でつなぎます。
-- 認証は `.env` の `CLAUDE_CODE_OAUTH_TOKEN`（`claude setup-token` で発行）。`.env` は git に入れません。声は `TTS_SPEAKER_ID`（CPU版）と `TTS_FALLBACK_SPEAKER_ID`（クラウド版）で変えられます。
-- マイクは HTTPS が必要なので、`https://holo.s-quad.com/` で開きます。
-
-### 返答 API の仕様
-
-`POST /api/chat` に `{ "text": "...", "history": [...] }` を送ると、`{ "reply": "...", "emotion": "happy" }` が返ります。`CONFIG.chatEndpoint` を空にするとデモ返答になります。TTS が使えないときは、ブラウザの `speechSynthesis` で代用します。
-
-## 声で動きを頼む
-
-話しかけた言葉の意味を AI（Claude）が読み取って、ルミの体を動かします。決まった合言葉ではなく、自然な言い方で頼めます。
-
-- 例: 「右手をあげて」「くるくる回って、そのあとジャンプして」「目を瞑って」「泣いて」「ウインクして」「ハートを出して」「あくびして」
-- 動き（約40種類）: 右手・左手・両手をあげる／手をふる／拍手／くるくる回る／ジャンプ／目を閉じる・開ける／泣く／笑う／怒る／照れる／おじぎ／うなずく／首をふる／おどる／ねむる／ウインク／ピース／投げキス／ハートを出す／ぶるぶる震える／しゃがむ／のび／あくび／指さす／肩をすくめる／すねる／驚く／考える／ゆらゆら／足ぶみ／万歳／気絶／首をかしげる／きょろきょろ／ぱたぱた／きらきら
-- 頼まなくても、会話の流れで自然に動きます（「ありがとう」でおじぎ、「寒い」でぶるぶる、「おやすみ」でねむる、など）。毎回ではなく、3回に1回くらいです。
-- 「右手」「左手」は、**画面の右側・左側の手**です。2つ以上頼むと、言った順に演じます。
-- **動きの判断をJevで速くする（任意）**: `.env` に `TYPESAFE_API_KEY`（TypeSafe の APIキー）を入れると、動きの判断だけを、TypeSafe の選択式モデル「Jev」に任せます（`/api/act`）。返事の文章は、これまでどおり Claude です。Jev は、動きの判断を、返事の生成と並べて呼ぶので、動きが早く始まります。キーがない・失敗したときは、Claude の判断にもどります。
-- 速さ: AIの判断は約3秒かかります。はっきりした依頼（「右手をあげて」「ジャンプして」など）は、AIの返事を待たず、すぐ動き始めます（`fastActions`）。否定形（「泣かないで」）や、あいまいな言い方は、AIに任せます。
-- 仕組み: `/api/chat` が `{reply, emotion, actions}` を返し、`index.html` の動きエンジン（`actPose`）が、3Dのルミ（`lumi3d.js`）に演じさせます。動きを増やすには、`orb-api/server.js` の `ACTIONS` と `index.html` の `ACT_DUR`・`actPose` に足します。
-- 確認用: URL に `?char=mascot3d&mode=plain&spin=0&act=raise_both` のように付けると、文字を打たなくても、動きを確認できます。
 
 ## CI/CD
 
 `main` に push すると、自動でテストとデプロイが走ります。
 
-- **CI（GitHub Actions）**: `.github/workflows/ci.yml`。`index.html` と `orb-api` の構文チェック、compose の検証、イメージのビルド、起動して `/api/health` などを確認するスモークテストを行います。
-- **CD（h-1 の cron）**: `scripts/autodeploy.sh` を3分ごとに実行します。`origin/main` に新しいコミットがあれば、取り込んでコンテナを作り直します。ヘルスチェックが通らなければ、直前のコミットに戻します。ログは h-1 の `~/docker/hit-orb-hologram/autodeploy.log` です。
-- `.env`（Claude のトークン）は git に入れず、h-1 にだけ置きます。KOTOCO や motion-scope と同じ方式です。
+- **CI（GitHub Actions）**: `.github/workflows/ci.yml`。`index.html`・`lumi3d.js`・`orb-api` の構文チェック、compose の検証、イメージのビルド、起動して `/api/health` などを確認するスモークテストを行います。
+- **CD（h-1 の cron）**: `scripts/autodeploy.sh` を 3 分ごとに実行します。`origin/main` に新しいコミットがあれば、取り込んでコンテナを作り直します。ヘルスチェックが通らなければ、直前のコミットに戻します。ログは h-1 の `~/docker/hit-orb-hologram/autodeploy.log` です。
+- KOTOCO や motion-scope と同じ pull 型の方式です。
 
 ## ファイル
 
 | ファイル | 内容 |
 |---|---|
-| `index.html` | 本体（描画・入力・状態管理・動きエンジン） |
-| `lumi3d.js` | 3D のルミ（three.js、球や円すいで組み立てたオリジナル） |
-| `dancer-concept.png` | ダンスキャラの透過画像（現在の表示に使用） |
-| `orb-api/` | 返答（Claude）と読み上げ（Aivis中継）の小さな API サーバー |
-| `scripts/autodeploy.sh` / `.github/workflows/ci.yml` | 自動デプロイ(h-1 の cron)と CI |
+| `index.html` | 本体（描画・入力・状態管理・動きエンジン・全二重・音声認識の補正） |
+| `lumi3d.js` | 3D のルミ（three.js、球や円すいで組み立てたオリジナル。電柱・お化け・寝具もここ） |
+| `orb-api/` | 返答・動きの判断（Jev）・読み上げの小さな API サーバー |
+| `scripts/autodeploy.sh` / `.github/workflows/ci.yml` | 自動デプロイ（h-1 の cron）と CI |
 | `nginx.conf` / `docker-compose.yml` | 配信と `/api` `/ws/stt` の中継設定 |
-| `docs/lumi.png` | READMEの画像（ルミ） |
+| `docs/architecture.svg` / `.png` | アーキテクチャ図 |
+| `docs/lumi.png` | README の画像（ルミ） |
 | `HANDOFF.md` | 開発の引き継ぎメモ（設計・TODO・ハマりどころ） |
 | `hologram-deck.pptx` | 製作の紹介スライド |
 | `ASSET-LICENSE.txt` | 素材の出典とライセンス |
-| `avatar3d.js` / `avatar3d.bundle.js` / `dancer-avatar.glb` / `dancer-motion.glb` / `dancer.mp4` / `dancer-sprite.png` | 旧 3D・動画・スプライト素材（現在は読み込んでいません） |
+| `dancer-concept.png` ほか | ダンスキャラ・旧 3D・動画・スプライト素材 |
 
 ## 今後
 
-- 基準デザインを保ったまま、ダンスをより本格的にする
-- ルミの独り言（話しかけられていないときの一言）や、会話の記憶
-- 板に映した実機で、文字の濃さ・リングの太さ・キャラの大きさを調整する
+- 3D のルミを使った、4 方向（ピラミッド）の表示
+- 会話の記憶、ルミの独り言
+- 音声認識の精度向上（補正の追加、別の STT との比較）
+- 板に映した実機で、文字の濃さ・キャラの大きさを調整する
 
 詳しくは [HANDOFF.md](HANDOFF.md) を見てください。
 
 ## ライセンスと素材
 
 素材の出典は [ASSET-LICENSE.txt](ASSET-LICENSE.txt) にまとめています。旧 3D モデルは CC-BY（Blender Foundation）、動画は Pexels ライセンス、Three.js は MIT です。
-
-## 返事の速さ(Cloudflare Workers AI)
-返事づくりは Cloudflare Workers AI(AI Gateway `orb-hologram` 経由、既定 llama-3.3-70b-fast、約1秒)が主で、失敗時は Claude CLI(約3秒)に自動で戻ります。声は Aivis Cloud が主、h-2 の CPU 版が予備(`TTS_PRIMARY=cpu` で逆転)。`.env` に `CLOUDFLARE_ACCOUNT_ID` / `CLOUDFLARE_API_TOKEN` / `CF_AI_GATEWAY_ID` を設定します。
-
-## アーキテクチャ
-![アーキテクチャ図](docs/architecture.png)
-
-| 役割 | 使っている技術 | 備考 |
-|---|---|---|
-| 表示 | Canvas2D / three.js(3Dルミ) / ペッパーズゴースト | 単一ファイル index.html、GPU不要 |
-| 公開 | gate の nginx-proxy-manager (holo.s-quad.com, HTTPS) | マイクはHTTPS必須 |
-| 認識(STT) | ElevenLabs Scribe v2 Realtime (hit-whisper-stt 経由) | WebSocketで16kHz PCMを送信 |
-| 返事 | Cloudflare Workers AI llama-3.3-70b-fast (AI Gateway経由) | 約1秒、失敗時は Claude Code CLI(haiku) |
-| 動きの判断 | TypeSafe Jev | 非生成の選択式モデル、約0.15秒 |
-| 声(TTS) | Aivis Cloud API(主) / h-2 の Aivis CPU版(予備) | 約0.45秒、短い定型は事前生成 |
-| CI/CD | GitHub Actions + h-1 cron(3分毎 autodeploy) | /api/health 失敗で自動ロールバック |

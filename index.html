@@ -858,6 +858,20 @@ function downsample(f32, inRate) {
   return out;
 }
 
+// 音声認識の聞き間違いを、動きの言葉に限って直す(「みぎてをあげて」→「右手をあげて」など)
+const STT_FIX = [
+  [/ミギテ|みぎて|ミギ手|右の手/g, '右手'], [/ヒダリテ|ひだりて|ヒダリ手|左の手/g, '左手'],
+  [/(右|左)て(?=を?(あげ|上げ|挙げ|さげ|下げ|おろ))/g, '$1手'],
+  [/手を?(開け|空け|明け)て/g, '手を上げて'], [/手を?(避け|探し)て/g, '手を下げて'],
+  [/じゃんぷ|ジャンぷ|ちゃんぷ|ジャンプ(?!.*[ぁ-ん]{6})/g, 'ジャンプ'], [/グルグル|ぐるぐる|クルクル/g, 'くるくる'],
+  [/まわって|マワッテ/g, '回って'], [/ブルブル|ぶるぶる|ふるえて/g, 'ぶるぶる'],
+  [/コワイ|こわい/g, '怖い'], [/オバケ|おばけ/g, 'お化け'], [/ゆうれい|ユウレイ/g, '幽霊'],
+  [/(?:^|[、。 ])ねて(?:ください|よ|ね)?[。!]*$/g, '寝て'], [/ウィンク|うぃんく|ウインク/g, 'ウインク'],
+  [/なきたい|ナイテ|ないて(?=[ください。!]*$)/g, '泣いて'], [/わらって|ワラッテ/g, '笑って'],
+  [/しゃがんで|シャガンデ/g, 'しゃがんで'], [/おじぎ|オジギ/g, 'お辞儀'],
+];
+function fixStt(t) { let o = t; for (const [re, to] of STT_FIX) o = o.replace(re, to); return o; }
+const END_SILENCE_MS = (() => { try { return +new URLSearchParams(location.search).get('silence') || 1400; } catch (_) { return 1400; } })();   // 話し終わりと見なす無音の長さ(既定1.4秒)
 function resetStt(next) {
   clearTimeout(finalTimer);
   try { ws && ws.close(); } catch (_) {}
@@ -881,7 +895,7 @@ function beginUtterance() {
     let m; try { m = JSON.parse(ev.data); } catch (_) { return; }
     if (m.type === 'partial' && m.text) { log('あなた: ' + m.text + ' …'); setUserCap(m.text, true); }
     else if (m.type === 'final') {
-      const t = (m.text || '').trim(); resetStt(false);
+      const t = fixStt((m.text || '').trim()); resetStt(false);
       if (t) handleUtterance(t); else setState(micOn ? 'listening' : 'idle');
     } else if (m.type === 'error') { log('音声認識エラー: ' + m.message); resetStt(); }
   };
@@ -916,7 +930,7 @@ function onMicChunk(f32) {
   level = Math.min(1, rms * 6);
   if (vad.waiting) return;
   const pcm = downsample(f32, actx.sampleRate);
-  const on = Math.max(0.02, vad.floor * 3), off = Math.max(0.012, vad.floor * 2);
+  const on = Math.max(0.02, vad.floor * 3), off = Math.max(0.010, vad.floor * 1.7);   // 語尾の小さな声も「まだ話している」と見なす
   if (!vad.active) {
     if (rms < on) vad.floor = vad.floor * 0.98 + rms * 0.02;     // 周囲の雑音の大きさを学習
     vad.pre.push(pcm); if (vad.pre.length > 10) vad.pre.shift(); // 声が出る前の約0.4秒も送る
@@ -924,7 +938,7 @@ function onMicChunk(f32) {
   } else {
     sendPcm(pcm);
     if (rms > off) { vad.lastVoice = now; vad.voiced += 43; }
-    if (now - vad.lastVoice > 1000 || now - vad.t0 > 20000) endUtterance();
+    if (now - vad.lastVoice > END_SILENCE_MS || now - vad.t0 > 20000) endUtterance();
   }
 }
 

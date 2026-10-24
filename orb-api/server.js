@@ -80,7 +80,7 @@ function send(res, code, obj) {
 
 http.createServer(async (req, res) => {
   try {
-    if (req.method === 'GET' && req.url === '/health') return send(res, 200, { ok: true });
+    if (req.method === 'GET' && (req.url === '/health' || req.url === '/api/health')) return send(res, 200, { ok: true });
     if (req.method === 'POST' && req.url === '/api/chat') {
       const { text, history } = await readJson(req);
       if (!text || typeof text !== 'string') return send(res, 400, { error: 'text required' });

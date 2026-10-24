@@ -1,0 +1,24 @@
+#!/usr/bin/env bash
+# h-1 用の pull 型自動デプロイ(cron から実行)。origin/main に新しいコミットがあれば反映し、
+# ヘルスチェックが通らなければ直前のコミットへ戻す。.env(トークン)は git 管理外なので影響しない。
+# index.html などを単一ファイルで bind mount しているので、反映のたびにコンテナを作り直す。
+set -euo pipefail
+cd "$(dirname "$0")/.."
+log() { echo "$(date '+%F %T') $*"; }
+health() { for _ in $(seq 1 45); do curl -fsS -m 3 "http://127.0.0.1:8897/api/health" >/dev/null 2>&1 && curl -fsS -m 3 "http://127.0.0.1:8897/" | grep -q "ORB Hologram" && return 0; sleep 2; done; return 1; }
+
+git fetch -q origin main
+OLD=$(git rev-parse HEAD); NEW=$(git rev-parse origin/main)
+[ "$OLD" = "$NEW" ] && exit 0
+
+log "deploy ${OLD:0:7} -> ${NEW:0:7}"
+git reset -q --hard "$NEW"
+docker compose up -d --build --force-recreate 2>&1 | tail -3
+if health; then
+  log "OK ${NEW:0:7}"; docker image prune -f >/dev/null 2>&1 || true
+else
+  log "NG health failed -> rollback to ${OLD:0:7}"
+  git reset -q --hard "$OLD"; docker compose up -d --build --force-recreate 2>&1 | tail -3
+  health && log "rolled back OK" || log "rollback also failed (要手動確認)"
+  exit 1
+fi

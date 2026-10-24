@@ -1,0 +1,37 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - name: JavaScript syntax (index.html の script / orb-api)
+        run: |
+          python3 - <<'PY'
+          import re
+          s = open('index.html', encoding='utf-8').read()
+          open('/tmp/page.js', 'w', encoding='utf-8').write(re.search(r'<script>(.*)</script>', s, re.S).group(1))
+          PY
+          node --check /tmp/page.js
+          node --check orb-api/server.js
+      - name: Validate compose
+        run: |
+          touch .env   # 実際の .env(トークン)は git 管理外。CI ではダミーで検証する
+          docker compose config -q
+      - name: Build images
+        run: docker compose build
+      - name: Smoke test (配信と API /health)
+        run: |
+          docker compose up -d
+          for i in $(seq 1 30); do curl -fsS http://127.0.0.1:8897/api/health && break; sleep 2; done
+          curl -fsS http://127.0.0.1:8897/ | grep -q "ORB Hologram"
+          curl -fsS -o /dev/null -w "chat(no text) -> %{http_code}\n" -X POST http://127.0.0.1:8897/api/chat -H 'content-type: application/json' -d '{}' | grep -q 400
+      - name: Logs on failure
+        if: failure()
+        run: docker compose logs

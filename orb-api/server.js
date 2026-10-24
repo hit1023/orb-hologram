@@ -99,6 +99,7 @@ function jevQuestions() {
   q.react = { type: 'choice', instructions: 'ユーザーの言葉に、かわいいキャラクターが頼まれなくても自然にとる反応はどれか。ふつうの会話ならnone', criteria: { none: '特別な反応はいらない、ふつうの会話', ...REACT_DESC } };
   return q;
 }
+let lastSpont = 0;
 async function jevAct(text) {
   const r = await fetch('https://api.typesafe.ai/v1/systemone', {
     method: 'POST', headers: { authorization: `Bearer ${JEV_KEY}`, 'content-type': 'application/json' },
@@ -109,12 +110,15 @@ async function jevAct(text) {
   const pick = (id, min) => {
     const x = a[id]; if (!x || !x.choice || x.choice === 'none') return null;
     const p = x.probabilities && typeof x.probabilities[x.choice] === 'number' ? x.probabilities[x.choice] : 1;
-    return p >= min ? x.choice : null;
+    return p >= min ? { c: x.choice, p } : null;
   };
   const acts = [];
-  for (const id of ['act1', 'act2', 'act3']) { const c = pick(id, 0.5); if (c && ACTIONS.includes(c) && !acts.includes(c)) acts.push(c); else if (!c) break; }
+  for (const id of ['act1', 'act2', 'act3']) { const r = pick(id, 0.5); if (r && ACTIONS.includes(r.c) && !acts.includes(r.c)) acts.push(r.c); else if (!r) break; }
   let spontaneous = false;
-  if (!acts.length) { const c = pick('react', 0.6); if (c && ACTIONS.includes(c) && Math.random() < 0.6) { acts.push(c); spontaneous = true; } }
+  if (!acts.length) {   // 頼まれていないときの自然な反応: 確信が高ければ必ず出す。連発は避ける(15秒あける)
+    const r = pick('react', 0.6);
+    if (r && ACTIONS.includes(r.c) && Date.now() - lastSpont > 15000 && (r.p >= 0.85 || Math.random() < 0.6)) { acts.push(r.c); spontaneous = true; lastSpont = Date.now(); }
+  }
   return { actions: acts, spontaneous };
 }
 

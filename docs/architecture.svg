@@ -1,0 +1,143 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1400 940" width="1400" height="940" font-family="'Hiragino Sans','Noto Sans JP','Helvetica Neue',Arial,sans-serif">
+  <defs>
+    <marker id="a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" fill="#475569"/></marker>
+    <marker id="ap" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" fill="#7c3aed"/></marker>
+    <filter id="s" x="-5%" y="-5%" width="110%" height="115%"><feDropShadow dx="0" dy="2" stdDeviation="3" flood-color="#0f172a" flood-opacity=".12"/></filter>
+  </defs>
+  <rect width="1400" height="940" fill="#f8fafc"/>
+  <text x="40" y="52" font-size="30" font-weight="700" fill="#0f172a">ORB Hologram「ルミ」 インフラ・AI アーキテクチャ</text>
+  <text x="40" y="80" font-size="16" fill="#64748b">スマホ+透明板(ペッパーズゴースト)で浮かぶAIキャラ。GPU不要 / 音声会話の往復 約1.5〜2秒</text>
+
+  <!-- zones -->
+  <rect x="30" y="105" width="300" height="560" rx="18" fill="#ede9fe" stroke="#c4b5fd"/>
+  <text x="50" y="136" font-size="18" font-weight="700" fill="#5b21b6">① ユーザー側(スマホ)</text>
+  <rect x="360" y="105" width="560" height="560" rx="18" fill="#e0f2fe" stroke="#7dd3fc"/>
+  <text x="380" y="136" font-size="18" font-weight="700" fill="#0369a1">② 自宅サーバー (jcom LAN)</text>
+  <rect x="950" y="105" width="420" height="560" rx="18" fill="#fef3c7" stroke="#fcd34d"/>
+  <text x="970" y="136" font-size="18" font-weight="700" fill="#b45309">③ 外部 AI / クラウド</text>
+
+  <!-- phone -->
+  <g filter="url(#s)">
+    <rect x="55" y="160" width="250" height="150" rx="14" fill="#fff" stroke="#a78bfa"/>
+    <text x="70" y="188" font-size="16" font-weight="700" fill="#4c1d95">ブラウザ (Chrome)</text>
+    <text x="70" y="212" font-size="13.5" fill="#334155">index.html 単一ファイル</text>
+    <text x="70" y="233" font-size="13.5" fill="#334155">Canvas2D / three.js (3Dルミ)</text>
+    <text x="70" y="254" font-size="13.5" fill="#334155">AudioWorklet+VAD(PCM送信)</text>
+    <text x="70" y="275" font-size="13.5" fill="#334155">動きエンジン(約40種) / 字幕</text>
+    <text x="70" y="296" font-size="13.5" fill="#334155">?char= ?mode= ?act= (確認用)</text>
+  </g>
+  <g filter="url(#s)">
+    <rect x="55" y="335" width="250" height="100" rx="14" fill="#fff" stroke="#a78bfa"/>
+    <text x="70" y="363" font-size="16" font-weight="700" fill="#4c1d95">マイク / スピーカー</text>
+    <text x="70" y="388" font-size="13.5" fill="#334155">HTTPS必須(マイク)</text>
+    <text x="70" y="409" font-size="13.5" fill="#334155">再生音量 → 口パク・字幕</text>
+  </g>
+  <g filter="url(#s)">
+    <rect x="55" y="460" width="250" height="185" rx="14" fill="#fff" stroke="#a78bfa"/>
+    <text x="70" y="488" font-size="16" font-weight="700" fill="#4c1d95">ホログラム板</text>
+    <text x="70" y="512" font-size="13.5" fill="#334155">透明シュリンク板を45°に置く</text>
+    <text x="70" y="533" font-size="13.5" fill="#334155">画面を上下反転して描画</text>
+    <text x="70" y="554" font-size="13.5" fill="#334155">黒=透明 → 像が空中に浮く</text>
+    <text x="70" y="575" font-size="13.5" fill="#334155">暗い部屋 + 輝度最大</text>
+    <text x="70" y="610" font-size="13.5" font-weight="700" fill="#5b21b6">総額 約300円</text>
+  </g>
+
+  <!-- home servers -->
+  <g filter="url(#s)">
+    <rect x="385" y="160" width="230" height="95" rx="14" fill="#fff" stroke="#38bdf8"/>
+    <text x="400" y="188" font-size="16" font-weight="700" fill="#075985">gate (192.168.0.18)</text>
+    <text x="400" y="212" font-size="13.5" fill="#334155">nginx-proxy-manager</text>
+    <text x="400" y="233" font-size="13.5" fill="#334155">holo.s-quad.com(HTTPS)</text>
+  </g>
+  <g filter="url(#s)">
+    <rect x="385" y="290" width="520" height="215" rx="14" fill="#fff" stroke="#38bdf8"/>
+    <text x="400" y="318" font-size="16" font-weight="700" fill="#075985">h-1 (192.168.0.20) Docker</text>
+    <rect x="400" y="333" width="225" height="60" rx="10" fill="#f0f9ff" stroke="#bae6fd"/>
+    <text x="412" y="357" font-size="14" font-weight="700" fill="#0c4a6e">orb-hologram (nginx :8897)</text>
+    <text x="412" y="378" font-size="12.5" fill="#334155">静的配信 / APIとSTTを中継</text>
+    <rect x="650" y="333" width="240" height="60" rx="10" fill="#f0f9ff" stroke="#bae6fd"/>
+    <text x="662" y="357" font-size="14" font-weight="700" fill="#0c4a6e">orb-api (Node :3000)</text>
+    <text x="662" y="378" font-size="12.5" fill="#334155">chat / act / tts(声キャッシュ)</text>
+    <rect x="400" y="410" width="225" height="75" rx="10" fill="#f0f9ff" stroke="#bae6fd"/>
+    <text x="412" y="434" font-size="14" font-weight="700" fill="#0c4a6e">hit-whisper-stt (:18010)</text>
+    <text x="412" y="455" font-size="12.5" fill="#334155">WebSocket STT 中継</text>
+    <text x="412" y="473" font-size="12.5" fill="#334155">start / PCM / partial / final</text>
+    <rect x="650" y="410" width="240" height="75" rx="10" fill="#f0f9ff" stroke="#bae6fd"/>
+    <text x="662" y="434" font-size="14" font-weight="700" fill="#0c4a6e">Aivis ルーター (:8000)</text>
+    <text x="662" y="455" font-size="12.5" fill="#334155">/speak → Aivis Cloud API</text>
+    <text x="662" y="473" font-size="12.5" fill="#334155">既定 まお あまあま</text>
+  </g>
+  <g filter="url(#s)">
+    <rect x="385" y="535" width="520" height="105" rx="14" fill="#fff" stroke="#38bdf8" stroke-dasharray="6 4"/>
+    <text x="400" y="563" font-size="16" font-weight="700" fill="#075985">h-2 (192.168.0.21) ※予備の声</text>
+    <text x="400" y="587" font-size="13.5" fill="#334155">Aivis CPU版 :8000 (無料・GPU不要)</text>
+    <text x="400" y="608" font-size="13.5" fill="#334155">Cloudが落ちたときに使う。初回はモデルロードで遅い</text>
+  </g>
+
+  <!-- external -->
+  <g filter="url(#s)">
+    <rect x="975" y="160" width="370" height="105" rx="14" fill="#fff" stroke="#f59e0b"/>
+    <text x="990" y="188" font-size="16" font-weight="700" fill="#92400e">STT: ElevenLabs Scribe v2 Realtime</text>
+    <text x="990" y="212" font-size="13.5" fill="#334155">音声 → 文字起こし(日本語)</text>
+    <text x="990" y="233" font-size="13.5" fill="#334155">話し終わりを検知して確定</text>
+  </g>
+  <g filter="url(#s)">
+    <rect x="975" y="285" width="370" height="125" rx="14" fill="#fff" stroke="#f97316"/>
+    <text x="990" y="313" font-size="16" font-weight="700" fill="#9a3412">返事づくり: Cloudflare Workers AI</text>
+    <text x="990" y="337" font-size="13.5" fill="#334155">llama-3.3-70b-instruct-fp8-fast (約1秒)</text>
+    <text x="990" y="358" font-size="13.5" fill="#334155">AI Gateway「orb-hologram」経由(ログ/認証)</text>
+    <text x="990" y="379" font-size="13.5" fill="#334155">出力: {reply, emotion, actions} のJSON</text>
+    <text x="990" y="400" font-size="13.5" fill="#334155">失敗時 → Claude Code CLI へ自動フォールバック</text>
+  </g>
+  <g filter="url(#s)">
+    <rect x="975" y="430" width="370" height="105" rx="14" fill="#fff" stroke="#8b5cf6"/>
+    <text x="990" y="458" font-size="16" font-weight="700" fill="#5b21b6">動きの判断: TypeSafe Jev</text>
+    <text x="990" y="482" font-size="13.5" fill="#334155">非生成の選択式モデル /v1/systemone</text>
+    <text x="990" y="503" font-size="13.5" fill="#334155">質問を並列評価 → 約0.15秒で動きを選ぶ</text>
+    <text x="990" y="524" font-size="13.5" fill="#334155">依頼の読み取り + 自然な反応(確信0.85以上)</text>
+  </g>
+  <g filter="url(#s)">
+    <rect x="975" y="555" width="370" height="85" rx="14" fill="#fff" stroke="#ec4899"/>
+    <text x="990" y="583" font-size="16" font-weight="700" fill="#9d174d">声: Aivis Cloud API</text>
+    <text x="990" y="607" font-size="13.5" fill="#334155">約0.45秒 / 感情で話速・抑揚を変える</text>
+    <text x="990" y="628" font-size="13.5" fill="#334155">短い定型の一言は先に作って覚えておく</text>
+  </g>
+
+  <!-- arrows: phone <-> gate -->
+  <path d="M305 235 H345 V207 H385" fill="none" stroke="#475569" stroke-width="2.2" marker-end="url(#a)"/>
+  <path d="M500 255 V290" fill="none" stroke="#475569" stroke-width="2.2" marker-end="url(#a)"/>
+  <!-- stt path -->
+  <path d="M625 428 C 700 300, 900 215, 975 212" fill="none" stroke="#f59e0b" stroke-width="2.4" marker-end="url(#a)"/>
+  <!-- api to chat / jev / tts -->
+  <path d="M890 352 H940 V340 H975" fill="none" stroke="#f97316" stroke-width="2.4" marker-end="url(#a)"/>
+  <path d="M890 372 C 930 372, 940 470, 975 470" fill="none" stroke="#7c3aed" stroke-width="2.4" marker-end="url(#ap)"/>
+  <path d="M770 485 C 770 600, 900 600, 975 597" fill="none" stroke="#ec4899" stroke-width="2.4" marker-end="url(#a)"/>
+  <!-- api <-> router -->
+  <path d="M770 393 V410" fill="none" stroke="#475569" stroke-width="2.2" marker-end="url(#a)"/>
+  <path d="M770 485 V535" fill="none" stroke="#94a3b8" stroke-width="2" stroke-dasharray="6 4" marker-end="url(#a)"/>
+  <!-- nginx to api -->
+  <path d="M625 363 H650" fill="none" stroke="#475569" stroke-width="2.2" marker-end="url(#a)"/>
+
+  <!-- numbered flow -->
+  <g font-size="14" font-weight="700" fill="#fff">
+    <circle cx="345" cy="221" r="14" fill="#7c3aed"/><text x="339.5" y="226.5">1</text>
+    <circle cx="700" cy="300" r="14" fill="#0ea5e9"/><text x="694.5" y="305.5">2</text>
+    <circle cx="935" cy="262" r="14" fill="#f59e0b"/><text x="929.5" y="267.5">3</text>
+    <circle cx="935" cy="350" r="14" fill="#f97316"/><text x="929.5" y="355.5">4</text>
+    <circle cx="935" cy="448" r="14" fill="#8b5cf6"/><text x="929.5" y="453.5">4'</text>
+    <circle cx="940" cy="600" r="14" fill="#ec4899"/><text x="934.5" y="605.5">5</text>
+  </g>
+
+  <!-- flow legend -->
+  <rect x="30" y="690" width="1340" height="120" rx="14" fill="#fff" stroke="#e2e8f0"/>
+  <text x="50" y="718" font-size="16" font-weight="700" fill="#0f172a">会話の流れ</text>
+  <text x="50" y="744" font-size="14" fill="#334155">① 声(PCM)をWSSでgate経由 → ② h-1のSTT中継 → ③ ElevenLabsで文字起こし → テキストをブラウザへ(字幕に表示)</text>
+  <text x="50" y="768" font-size="14" fill="#334155">④ 同時に2本を並列実行: 返事=Cloudflare Workers AI(約1秒) / ④' 動き=Jev(約0.15秒)。はっきりした動きの依頼は正規表現で即時に動き始める</text>
+  <text x="50" y="792" font-size="14" fill="#334155">⑤ 返事をAivis Cloudで音声化(約0.45秒) → 再生しながら口パク+字幕+動きを演じる。短い動きの依頼は定型の一言で即答(声は事前生成)</text>
+
+  <!-- CI/CD -->
+  <rect x="30" y="830" width="1340" height="90" rx="14" fill="#ecfdf5" stroke="#6ee7b7"/>
+  <text x="50" y="858" font-size="16" font-weight="700" fill="#065f46">CI/CD</text>
+  <text x="50" y="884" font-size="14" fill="#334155">GitHub (hit1023/orb-hologram) → GitHub Actions(構文チェック / compose検証 / ビルド / スモークテスト)</text>
+  <text x="50" y="906" font-size="14" fill="#334155">h-1 の cron が3分ごとに scripts/autodeploy.sh: git reset --hard origin/main → docker compose up -d --build → /api/health 失敗時は自動ロールバック</text>
+</svg>

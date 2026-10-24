@@ -146,3 +146,16 @@ docker compose restart
 
 ## 返事の速さ(Cloudflare Workers AI)
 返事づくりは Cloudflare Workers AI(AI Gateway `orb-hologram` 経由、既定 llama-3.3-70b-fast、約1秒)が主で、失敗時は Claude CLI(約3秒)に自動で戻ります。声は Aivis Cloud が主、h-2 の CPU 版が予備(`TTS_PRIMARY=cpu` で逆転)。`.env` に `CLOUDFLARE_ACCOUNT_ID` / `CLOUDFLARE_API_TOKEN` / `CF_AI_GATEWAY_ID` を設定します。
+
+## アーキテクチャ
+![アーキテクチャ図](docs/architecture.png)
+
+| 役割 | 使っている技術 | 備考 |
+|---|---|---|
+| 表示 | Canvas2D / three.js(3Dルミ) / ペッパーズゴースト | 単一ファイル index.html、GPU不要 |
+| 公開 | gate の nginx-proxy-manager (holo.s-quad.com, HTTPS) | マイクはHTTPS必須 |
+| 認識(STT) | ElevenLabs Scribe v2 Realtime (hit-whisper-stt 経由) | WebSocketで16kHz PCMを送信 |
+| 返事 | Cloudflare Workers AI llama-3.3-70b-fast (AI Gateway経由) | 約1秒、失敗時は Claude Code CLI(haiku) |
+| 動きの判断 | TypeSafe Jev | 非生成の選択式モデル、約0.15秒 |
+| 声(TTS) | Aivis Cloud API(主) / h-2 の Aivis CPU版(予備) | 約0.45秒、短い定型は事前生成 |
+| CI/CD | GitHub Actions + h-1 cron(3分毎 autodeploy) | /api/health 失敗で自動ロールバック |

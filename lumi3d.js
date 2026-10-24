@@ -220,10 +220,12 @@ export function createLumi3D({ width = 560, height = 720 } = {}) {
   function render(p) {
     const t = p.time;
     const fx = p.fx || {};                           // 声の指示による動き(index.html の動きエンジンが作る)
+    const sr = Math.sin(Math.min(fx.roll || 0, 1.6));    // 横になる(寝る・気絶)ときは、画面の中央に収まるよう寄せて、引く
     root.rotation.set(fx.bodyPitch || 0, p.spin + (fx.spinAdd || 0), fx.roll || 0);
+    root.position.x = sr * 2.1;
     root.scale.set(1, 1 - (fx.squash || 0), 1);
-    camera.position.z = 10.6 + (fx.jump || 0) * 2.0;     // 跳ぶときは少し引いて、画面の上に突き抜けないようにする(高く跳んで見える)
-    root.position.y = Math.sin(t * 1.8) * 0.06 + (p.pose === 'happy' ? Math.abs(Math.sin(t * 5)) * 0.06 : 0) + (fx.jump || 0);
+    camera.position.z = 10.6 + (fx.jump || 0) * 2.0 + Math.abs(sr) * 3.2;     // 跳ぶときは少し引いて、画面の上に突き抜けないようにする(高く跳んで見える)
+    root.position.y = Math.sin(t * 1.8) * 0.06 + (p.pose === 'happy' ? Math.abs(Math.sin(t * 5)) * 0.06 : 0) + (fx.jump || 0) + Math.abs(sr) * 1.0;
     head.rotation.set(0.05 + Math.sin(t * 1.3) * 0.02 + (fx.pitch || 0), fx.yaw || 0, p.tilt + Math.sin(t * 1.7) * 0.02 + (fx.headRoll || 0));
     updateHearts(t, !!fx.hearts);
     ahogePivot.rotation.z = -0.1 + Math.sin(t * 1.7) * 0.12; ahogeStar.rotation.y = t * 0.8;

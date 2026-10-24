@@ -633,8 +633,8 @@ function drawMascot(R, time) {
 /* ===== ふるまい: 声で頼まれた動き(手をあげる・回る・泣く…)を順番に演じる =====
    返答API が actions に動きの名前を入れて返す。話し始めるときに playActions() で受け取る */
 const ACT_DUR = { raise_right: 4, raise_left: 4, raise_both: 4, wave: 3, clap: 3, spin: 1.8, jump: 1.6, close_eyes: 4, open_eyes: 0.4,
-  cry: 4.5, laugh: 3.5, angry: 3.5, shy: 3.5, bow: 1.8, nod: 1.8, shake_head: 1.8, dance: 5, sleep: 5,
-  wink_left: 1.6, wink_right: 1.6, peace: 3, kiss: 2.6, heart: 3.5, shiver: 3.5, sit: 3.5, stretch: 3.5, yawn: 3.5, point: 2.5, shrug: 2.5, sulk: 3.5,
+  cry: 4.5, laugh: 3.5, angry: 3.5, shy: 3.5, bow: 1.8, nod: 1.8, shake_head: 1.8, dance: 5, sleep: 6.5,
+  wink_left: 1.6, wink_right: 1.6, peace: 3, kiss: 2.6, heart: 3.5, shiver: 3.5, sit: 4, stretch: 3.5, yawn: 3.5, point: 2.5, shrug: 2.5, sulk: 3.5,
   surprise: 2, think: 3.5, sway: 5, march: 4, banzai: 2.5, faint: 3.6, tilt_head: 2.5, look_around: 3.5, flap: 3.5, sparkle: 3, guts: 3, cheer: 3.5, hop: 3.5, lower: 0.1 };
 let actQueue = [], actCur = null, curFx = null, actFrame = -1;
 function playActions(list) {
@@ -672,7 +672,7 @@ function actPose(n, u, d) {
     case 'kiss': f.mouth = 'o'; f.open = 0; f.emo = 'shy'; f.hearts = u > 0.7; f.arms = { R: [-2.1, s(Math.min(1, u / 1.1) * PI) * 0.9 - 0.2] }; break;
     case 'heart': f.hearts = true; f.emo = 'happy'; f.arms = { L: [0, -2.5, 0.3, 0.4], R: [0, 2.5, 0.3, 0.4] }; break;
     case 'shiver': f.mouth = 'wavy'; f.open = 0; f.arms = { L: [-1.3, 0.8], R: [-1.3, -0.8] }; f.roll = s(u * 45) * 0.035; f.yaw = s(u * 37) * 0.05; break;
-    case 'sit': f.squash = 0.28 * env; f.arms = { L: [0, -0.3], R: [0, 0.3] }; break;
+    case 'sit': f.squash = 0.42 * env; f.pitch = 0.18 * env; f.arms = { L: [-0.9, 0.5], R: [-0.9, -0.5] }; break;   // しゃがむ: 深く縮んで、うつむいて膝をかかえる
     case 'stretch': f.arms = { L: [0, -2.75, 0.7, 0.3], R: [0, 2.75, 0.7, 0.3] }; f.bodyPitch = -0.18 * env; f.pitch = -0.25 * env; f.closeEyes = true; f.open = 0.5 * env; break;
     case 'yawn': f.open = 0.9 * env * (0.7 + 0.3 * s(u * 2)); f.closeEyes = true; f.arms = { R: [-2.3, -0.2] }; f.pitch = -0.15 * env; break;
     case 'point': f.arms = { R: [-1.55, 0.15, 0.1, 0.4] }; break;
@@ -689,7 +689,7 @@ function actPose(n, u, d) {
     case 'flap': f.emo = 'happy'; f.jump = Math.abs(s(u * 6)) * 0.08; f.arms = { L: [0, -(1.2 + s(u * 12) * 0.5), 0.4, 0.2], R: [0, 1.2 + s(u * 12 + PI) * 0.5, 0.4, 0.2] }; break;
     case 'lower': break;
     case 'sparkle': f.emo = 'happy'; f.sparkle = true; f.arms = { R: [0, 0.9] }; break;
-    case 'sleep': f.closeEyes = true; f.pitch = 0.3 * env; f.roll = s(u * 1.2) * 0.04; break;
+    case 'sleep': { const r = u < 1.1 ? easeIO(u / 1.1) : u > d - 0.9 ? easeIO(Math.max(0, (d - u) / 0.9)) : 1; f.roll = 1.5 * r + s(u * 1.6) * 0.03 * r; f.closeEyes = true; f.arms = { L: [0, -0.3], R: [0, 0.3] }; f.sparkle = r > 0.9 && (u % 1.6) < 0.4; break; }   // 横になって寝る(ゆっくり倒れて、起き上がる)
   }
   return f;
 }
@@ -712,9 +712,9 @@ const FAST_ACTIONS = [
   [/(右手|みぎて|右の手).{0,3}(あげ|上げ|挙げ)/, 'raise_right'], [/(左手|ひだりて|左の手).{0,3}(あげ|上げ|挙げ)/, 'raise_left'], [/(両手|ばんざい|バンザイ|万歳)/, 'raise_both'],
   [/(手を?(ふ|振)って|バイバイ)/, 'wave'], [/拍手/, 'clap'], [/(くるくる|回って|まわって|回転)/, 'spin'], [/(ジャンプ|跳ん|飛んで|はねて)/, 'jump'],
   [/(目を?(瞑|つぶ|閉じ))/, 'close_eyes'], [/目を?(開け|あけ|ひらい)/, 'open_eyes'], [/(泣いて|なみだ|涙)/, 'cry'], [/(笑って|わらって)/, 'laugh'],
-  [/(怒って|おこって)/, 'angry'], [/(おじぎ|お辞儀)/, 'bow'], [/(おどって|踊って|ダンス)/, 'dance'], [/(寝て|ねて|おやすみ)/, 'sleep'],
+  [/(怒って|おこって)/, 'angry'], [/(おじぎ|お辞儀)/, 'bow'], [/(おどって|踊って|ダンス)/, 'dance'], [/(寝て|ねて|おやすみ|横になって|ごろん|寝転)/, 'sleep'],
   [/ウインク|ウィンク/, 'wink_right'], [/ピース/, 'peace'], [/(投げキス|キスして)/, 'kiss'], [/ハート/, 'heart'], [/(ぶるぶる|震えて)/, 'shiver'],
-  [/(しゃがん|座って|すわって)/, 'sit'], [/(のび|伸び)/, 'stretch'], [/あくび/, 'yawn'], [/(指さし|ゆびさし)/, 'point'],
+  [/(しゃがん|座って|すわって|かがん)/, 'sit'], [/(のび|伸び)/, 'stretch'], [/あくび/, 'yawn'], [/(指さし|ゆびさし)/, 'point'],
   [/(すねて|むくれて)/, 'sulk'], [/(きょろきょろ)/, 'look_around'], [/(足ぶみ|足踏み)/, 'march'], [/(かしげて|傾げて)/, 'tilt_head'], [/(きらきら|キラキラ)/, 'sparkle'],
   [/ガッツポーズ|ファイト/, 'guts'], [/(応援|フレーフレー|がんばれ)/, 'cheer'], [/(ぴょんぴょん|ぴょこぴょこ)/, 'hop'],
 ];

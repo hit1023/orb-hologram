@@ -95,6 +95,14 @@ docker compose restart
 
 `POST /api/chat` に `{ "text": "...", "history": [...] }` を送ると、`{ "reply": "...", "emotion": "happy" }` が返ります。`CONFIG.chatEndpoint` を空にするとデモ返答になります。TTS が使えないときは、ブラウザの `speechSynthesis` で代用します。
 
+## CI/CD
+
+`main` に push すると、自動でテストとデプロイが走ります。
+
+- **CI（GitHub Actions）**: `.github/workflows/ci.yml`。`index.html` と `orb-api` の構文チェック、compose の検証、イメージのビルド、起動して `/api/health` などを確認するスモークテストを行います。
+- **CD（h-1 の cron）**: `scripts/autodeploy.sh` を3分ごとに実行します。`origin/main` に新しいコミットがあれば、取り込んでコンテナを作り直します。ヘルスチェックが通らなければ、直前のコミットに戻します。ログは h-1 の `~/docker/hit-orb-hologram/autodeploy.log` です。
+- `.env`（Claude のトークン）は git に入れず、h-1 にだけ置きます。KOTOCO や motion-scope と同じ方式です。
+
 ## ファイル
 
 | ファイル | 内容 |
@@ -102,6 +110,7 @@ docker compose restart
 | `index.html` | 本体（描画・入力・状態管理） |
 | `dancer-concept.png` | ダンスキャラの透過画像（現在の表示に使用） |
 | `orb-api/` | 返答（Claude）と読み上げ（Aivis中継）の小さな API サーバー |
+| `scripts/autodeploy.sh` / `.github/workflows/ci.yml` | 自動デプロイ(h-1 の cron)と CI |
 | `nginx.conf` / `docker-compose.yml` | 配信と `/api` `/ws/stt` の中継設定 |
 | `docs/lumi.png` | READMEの画像（ルミ） |
 | `HANDOFF.md` | 開発の引き継ぎメモ（設計・TODO・ハマりどころ） |

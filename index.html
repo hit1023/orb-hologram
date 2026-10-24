@@ -960,7 +960,7 @@ async function handleUtterance(text) {
   clearTimeout(emotionTimer); emotion = 'neutral';
   let out;
   if (fa.length && text.length <= 16 && CONFIG.chatEndpoint) {      // 短くはっきりした動きの依頼は、定型の一言ですぐ返す(声も先読みしてあるので遅れない)
-    out = { reply: ACKS[Math.floor(Math.random() * ACKS.length)], emotion: 'happy', actions: [] };
+    out = { reply: ACKS[Math.floor(Math.random() * ACKS.length)], emotion: 'happy', actions: fa };
     chatHistory.push({ role: 'user', text }, { role: 'ai', text: out.reply });
     return speak(out.reply, out.emotion, out.actions);
   }
@@ -1017,13 +1017,13 @@ async function speak(text, emo, actions) {
       outRms = Math.sqrt(s / tb.length); level = Math.min(1, outRms * 4);
     }, 40);
     playing = src;
-    replyCap.dur = buf.duration * 900; replyCap.at = performance.now(); replyCap.started = true; if (!actDecided && (actions || []).join(',') !== fastPlayed) playActions(actions); fastPlayed = '';
+    replyCap.dur = buf.duration * 900; replyCap.at = performance.now(); replyCap.started = true; if (!actDecided && (actions || []).length && (actions || []).join(',') !== fastPlayed) playActions(actions); fastPlayed = '';
     src.onended = () => { clearInterval(timer); done(); };
     src.start();
   } catch (e) {                                   // TTSが使えないときはブラウザの声で代用
     log('ルミ: ' + text + '\n(ブラウザの声で再生: ' + e.message + ')');
     const u = new SpeechSynthesisUtterance(text); u.lang = CONFIG.lang;
-    replyCap.dur = text.length * 170; replyCap.at = performance.now(); replyCap.started = true; if (!actDecided && (actions || []).join(',') !== fastPlayed) playActions(actions); fastPlayed = '';
+    replyCap.dur = text.length * 170; replyCap.at = performance.now(); replyCap.started = true; if (!actDecided && (actions || []).length && (actions || []).join(',') !== fastPlayed) playActions(actions); fastPlayed = '';
     let env = 0; const timer = setInterval(() => { env = Math.random() < 0.35 ? 0.2 + Math.random() * 0.7 : env * 0.7; level = env; }, 90);
     u.onend = u.onerror = () => { clearInterval(timer); done(); };
     curU = u; speechSynthesis.cancel(); speechSynthesis.speak(u);

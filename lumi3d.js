@@ -225,6 +225,16 @@ export function createLumi3D({ width = 560, height = 720 } = {}) {
     for (const sx of [-1, 1]) mesh(new THREE.CylinderGeometry(0.07, 0.09, 0.28, 10), insMat, pole, sx * (w / 2 - 0.15), y + 0.2, 0);
   }
   for (const y of [0.8, 2.2]) mesh(new THREE.CylinderGeometry(0.44, 0.44, 0.1, 20), insMat, pole, 0, y, 0);
+  // 寝るとき、まくら・敷きぶとん・かけぶとんが、ぽんっと湧いてくる(横になった体の位置に合わせる)
+  const bed = new THREE.Group(); bed.position.set(0.5, 0.6, 0); scene.add(bed); bed.visible = false;
+  const bm = (c, e) => new THREE.MeshStandardMaterial({ color: c, emissive: e, roughness: 0.9 });
+  const rbox = (w, h, d, mat, x, y, z) => mesh(new THREE.BoxGeometry(w, h, d), mat, bed, x, y, z);
+  rbox(5.4, 0.34, 2.2, bm(0xe4ecff, 0x22304f), -0.0, -1.1, -0.5);                                  // 敷きぶとん
+  const pil = mesh(new THREE.SphereGeometry(1, 20, 14), bm(0xfff1f7, 0x4a3040), bed, -0.75, -0.75, -0.35); pil.scale.set(1.35, 0.4, 0.95);   // まくら
+  rbox(2.3, 1.55, 0.3, bm(0xb99cff, 0x2e2358), 1.15, -0.1, 0.85);                                 // かけぶとん
+  rbox(2.3, 0.2, 0.34, bm(0xe3d6ff, 0x3a3060), 1.15, 0.45, 0.86);                                  // えりの縁どり
+  for (const [x, y] of [[0.6, -0.2], [1.3, -0.5], [1.8, 0.1]]) { const st = mesh(new THREE.SphereGeometry(0.13, 10, 8), new THREE.MeshBasicMaterial({ color: 0xffe36b }), bed, x, y, 1.03); st.scale.set(1, 1, 0.3); }
+  const easeBack = (t) => 1 + 2.70158 * Math.pow(t - 1, 3) + 1.70158 * Math.pow(t - 1, 2);
   const cur = { hue: 190 };
 
   function render(p) {
@@ -233,6 +243,8 @@ export function createLumi3D({ width = 560, height = 720 } = {}) {
     const sr = Math.sin(Math.min(fx.roll || 0, 1.6));    // 横になる(寝る・気絶)ときは、画面の中央に収まるよう寄せて、引く
     root.rotation.set(fx.bodyPitch || 0, p.spin + (fx.spinAdd || 0), fx.roll || 0);
     root.position.x = sr * 2.1 + (fx.hide || 0) * 0.45 + (fx.shakeX || 0);
+    const ba = Math.max(0, Math.min(1, ((fx.bed || 0) - 0.3) / 0.7));              // 寝具が湧く量(ぽよんと弾みながら)
+    bed.visible = ba > 0.02; bed.scale.setScalar(Math.max(0.001, easeBack(ba)));
     const pa = fx.pole || 0;                              // 電柱が出てくる量(0〜1)。右から滑り込み、手前に立つ
     pole.visible = pa > 0.01; pole.position.set(4.4 - 3.4 * (1 - Math.pow(1 - pa, 3)), 0, 1.3);
     root.scale.set(1, 1 - (fx.squash || 0), 1);

@@ -646,8 +646,8 @@ const easeIO = x => x < 0.5 ? 2 * x * x : 1 - Math.pow(-2 * x + 2, 2) / 2;
 function actPose(n, u, d) {
   const f = {}, s = Math.sin, PI = Math.PI, env = Math.max(0, Math.min(1, u / 0.3, (d - u) / 0.35));
   switch (n) {
-    case 'raise_right': f.arms = { R: [0, 2.75, 0.7, 0.3] }; break;                       // 画面の右側の手
-    case 'raise_left': f.arms = { L: [0, -2.75, 0.7, 0.3] }; break;                       // 画面の左側の手
+    case 'raise_right': f.arms = { L: [0, -2.75, 0.7, 0.3] }; break;                      // ルミの右手(向かい合うので画面の左側)
+    case 'raise_left': f.arms = { R: [0, 2.75, 0.7, 0.3] }; break;                        // ルミの左手(画面の右側)
     case 'raise_both': f.arms = { L: [0, -2.75, 0.7, 0.3], R: [0, 2.75, 0.7, 0.3] }; f.emo = 'happy'; break;
     case 'wave': f.arms = { R: [0, 2.3 + s(u * 9) * 0.4, 0.7, 0.3] }; f.emo = 'happy'; break;
     case 'clap': { const c = 0.45 - Math.abs(s(u * 10)) * 0.2; f.arms = { L: [-1.2, c], R: [-1.2, -c] }; f.emo = 'happy'; break; }
@@ -666,8 +666,8 @@ function actPose(n, u, d) {
     case 'nod': f.pitch = 0.28 * s(u * 9) * env; break;
     case 'shake_head': f.yaw = 0.55 * s(u * 8) * env; break;
     case 'dance': f.emo = 'happy'; f.roll = s(u * 4) * 0.12; f.yaw = s(u * 2) * 0.4; f.jump = Math.abs(s(u * 5)) * 0.1; f.arms = { L: [0, -(1.5 + s(u * 5) * 0.7), 0.5, 0.2], R: [0, 1.5 + s(u * 5 + 1) * 0.7, 0.5, 0.2] }; break;
-    case 'wink_left': f.wink = 'L'; f.emo = 'happy'; f.headRoll = -0.15 * env; break;       // 画面の左の目
-    case 'wink_right': f.wink = 'R'; f.emo = 'happy'; f.headRoll = 0.15 * env; break;      // 画面の右の目
+    case 'wink_left': f.wink = 'R'; f.emo = 'happy'; f.headRoll = 0.15 * env; break;        // ルミの左目(画面の右)
+    case 'wink_right': f.wink = 'L'; f.emo = 'happy'; f.headRoll = -0.15 * env; break;     // ルミの右目(画面の左)
     case 'peace': f.arms = { R: [-2.0, -0.3] }; f.wink = 'L'; f.emo = 'happy'; f.headRoll = 0.12 * env; break;
     case 'kiss': f.mouth = 'o'; f.open = 0; f.emo = 'shy'; f.hearts = u > 0.7; f.arms = { R: [-2.1, s(Math.min(1, u / 1.1) * PI) * 0.9 - 0.2] }; break;
     case 'heart': f.hearts = true; f.emo = 'happy'; f.arms = { L: [0, -2.5, 0.3, 0.4], R: [0, 2.5, 0.3, 0.4] }; break;

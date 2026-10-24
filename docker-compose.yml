@@ -22,7 +22,8 @@ services:
     restart: unless-stopped
     env_file: .env
     environment:
-      TTS_ROUTER_URL: http://192.168.0.20:8000
+      TTS_ROUTER_URL: http://192.168.0.21:8000
+      TTS_FALLBACK_URL: http://192.168.0.20:8000
     volumes:
       - claude-config:/data/claude-config
 

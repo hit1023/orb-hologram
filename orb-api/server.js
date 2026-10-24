@@ -8,8 +8,12 @@ const { spawn } = require('child_process');
 
 const PORT = +process.env.PORT || 3000;
 const MODEL = process.env.CLAUDE_MODEL || 'haiku';
-const ROUTER = (process.env.TTS_ROUTER_URL || 'http://192.168.0.20:8000').replace(/\/$/, '');
-const SPEAKER_ID = +process.env.TTS_SPEAKER_ID || 387889485;
+// 主: h-2 の CPU 版 Aivis(無料)。遅いとき・失敗したときは h-1 の Aivis Cloud 版へ切り替える
+const ROUTER = (process.env.TTS_ROUTER_URL || 'http://192.168.0.21:8000').replace(/\/$/, '');
+const SPEAKER_ID = +process.env.TTS_SPEAKER_ID || 888753762;
+const FALLBACK_ROUTER = (process.env.TTS_FALLBACK_URL || 'http://192.168.0.20:8000').replace(/\/$/, '');
+const FALLBACK_SPEAKER_ID = +process.env.TTS_FALLBACK_SPEAKER_ID || 387889485;
+const TTS_TIMEOUT_MS = +process.env.TTS_TIMEOUT_MS || 8000;
 const EMOTIONS = ['neutral', 'happy', 'sad', 'surprised', 'angry', 'shy'];
 
 const SYSTEM = `あなたは「ルミ」。スマホとホログラムの板の中に住む、小さな星の妖精の女の子のAIキャラクターです。
@@ -89,17 +93,27 @@ http.createServer(async (req, res) => {
     if (req.method === 'POST' && req.url === '/api/tts') {
       const { text, emotion } = await readJson(req);
       if (!text || typeof text !== 'string') return send(res, 400, { error: 'text required' });
-      const r = await fetch(`${ROUTER}/speak`, {
+      const t0 = Date.now();
+      const synth = (base, id, ms) => fetch(`${base}/speak`, {
         method: 'POST', headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ text: text.slice(0, 300), speaker_id: SPEAKER_ID, ...(VOICE[emotion] || {}) }),
+        body: JSON.stringify({ text: text.slice(0, 300), speaker_id: id, ...(VOICE[emotion] || {}) }),
+        signal: AbortSignal.timeout(ms),
       });
+      let r, via = 'cpu';
+      try { r = await synth(ROUTER, SPEAKER_ID, TTS_TIMEOUT_MS); if (!r.ok) throw new Error(`status ${r.status}`); }
+      catch (e) {   // CPU版が遅い/落ちているときはクラウド版へ(CPU側の処理は続くので、次回は速くなる)
+        console.log(`[tts] cpu failed (${e.message}) -> cloud`);
+        via = 'cloud'; r = await synth(FALLBACK_ROUTER, FALLBACK_SPEAKER_ID, 30000);
+      }
       if (!r.ok) return send(res, 502, { error: `tts ${r.status}` });
+      const buf = Buffer.from(await r.arrayBuffer());
+      console.log(`[tts] ${via} ${Date.now() - t0}ms ${buf.length}B`);
       res.writeHead(200, { 'content-type': 'audio/mpeg', 'cache-control': 'no-store' });
-      return res.end(Buffer.from(await r.arrayBuffer()));
+      return res.end(buf);
     }
     send(res, 404, { error: 'not found' });
   } catch (e) {
     console.error('[error]', e.message);
     send(res, 500, { error: e.message });
   }
-}).listen(PORT, () => console.log(`orb-api listening on ${PORT} (model=${MODEL}, speaker=${SPEAKER_ID})`));
+}).listen(PORT, () => console.log(`orb-api listening on ${PORT} (model=${MODEL}, speaker=${SPEAKER_ID}@${ROUTER}, fallback=${FALLBACK_SPEAKER_ID}@${FALLBACK_ROUTER})`));

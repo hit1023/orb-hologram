@@ -1,12 +1,23 @@
 # orb-hologram
 
-スマホと透明な板だけで、空中に浮かぶ AI キャラクターを出す「ペッパーズゴースト」の工作と、その映像を描くウェブページです。
-GPU なし・工作は最小限・スマホのブラウザだけで動くことを前提にしています。材料は総額 300 円ほどです。
+<p align="center"><img src="docs/lumi.png" alt="ルミ（星の妖精のAIキャラクター）" width="360"></p>
+
+<p align="center"><b>ホログラム表示に特化した AI チャットボット</b><br>スマホと透明な板だけで、AI キャラクター「ルミ」を空中に浮かべて、声で会話します。</p>
+
+## これは何か
+
+**ペッパーズゴースト（板の反射を使った簡易ホログラム）で見せることを前提に作った、AI チャットボットです。**
+普通のチャット画面ではなく、「板に映して空中に浮かぶ」ことを最初から設計に入れています。
+
+- **ホログラム向けの表示**: 板で上下が反転して見えるので、あらかじめ反転して描きます。黒背景に明るい色で描き、暗い反射でも見えやすくしています。
+- **AI と声で会話**: 話しかけると、AI（Claude）が返事をして、声で読み上げます。返事の気持ちに合わせて、キャラの表情・色・身ぶりが変わります。
+- **GPU なし・工作は最小限**: スマホのブラウザと、板・黒プラダンだけで動きます。材料は総額 300 円ほどです。
 
 ## できること
 
 - キャラクターを 4 種類から選べます: **ルミ（かわいい星の妖精・既定）** / リング / ダンスする女の子 / 球体
 - ルミは AI（Claude）と会話します。返答の気持ちに合わせて表情・色・身ぶりが変わります（うれしい・かなしい・おどろき・おこる・てれる・考え中）
+- どのキャラでも、話す・聞く・考えるに合わせて色と動きが変わり、返事の文章が下の帯に流れます
 - 4 つの状態で色と動きが変わります: 待機（青）・聞いている（緑）・考え中（紫）・話している（橙）
 - キャラの下に、決まった文章が左から右へ流れます
 - マイク音量・音声認識（Web Speech API）・文字入力に対応しています
@@ -75,9 +86,9 @@ docker compose restart
         ── /ws/stt   ──▶ hit-whisper-stt(:18010, ElevenLabs Scribe)
 ```
 
-- `orb-api/` が返答（Claude Code CLI を headless で実行）と読み上げ（既存の Aivis ルーターへ中継）を担当します。
+- `orb-api/` が返答（Claude Code CLI を headless で実行）と読み上げ（既存の Aivis ルーターへ中継）を担当します。読み上げは、GPU なしで動く CPU 版 Aivis を主に使い、遅いときだけ Aivis Cloud 版に切り替えます。
 - 音声認識は、既存の `hit-whisper-stt` の WebSocket（16kHz PCM）へ nginx 経由でつなぎます。
-- 認証は `.env` の `CLAUDE_CODE_OAUTH_TOKEN`（`claude setup-token` で発行）。`.env` は git に入れません。声は `TTS_SPEAKER_ID` で変えられます。
+- 認証は `.env` の `CLAUDE_CODE_OAUTH_TOKEN`（`claude setup-token` で発行）。`.env` は git に入れません。声は `TTS_SPEAKER_ID`（CPU版）と `TTS_FALLBACK_SPEAKER_ID`（クラウド版）で変えられます。
 - マイクは HTTPS が必要なので、`https://holo.s-quad.com/` で開きます。
 
 ### 返答 API の仕様
@@ -92,6 +103,7 @@ docker compose restart
 | `dancer-concept.png` | ダンスキャラの透過画像（現在の表示に使用） |
 | `orb-api/` | 返答（Claude）と読み上げ（Aivis中継）の小さな API サーバー |
 | `nginx.conf` / `docker-compose.yml` | 配信と `/api` `/ws/stt` の中継設定 |
+| `docs/lumi.png` | READMEの画像（ルミ） |
 | `HANDOFF.md` | 開発の引き継ぎメモ（設計・TODO・ハマりどころ） |
 | `hologram-deck.pptx` | 製作の紹介スライド |
 | `ASSET-LICENSE.txt` | 素材の出典とライセンス |

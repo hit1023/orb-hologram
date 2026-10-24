@@ -86,7 +86,11 @@ addEventListener('resize', resize); resize();
 function setState(s) { state = s; log(); }
 function log(extra) {
   $('log').textContent = `状態: ${({idle:'待機',listening:'聞いている',thinking:'考え中',speaking:'話している'})[state]}` + (extra ? '\n' + extra : '');
+  // 「あなた:」「ルミ:」は大きな字幕・帯で出すので、板に映す字幕に出すのはエラーや案内だけ
+  if (extra && !/^(あなた|ルミ|認識中)/.test(extra)) setNotice(extra);
 }
+// 左上の小さな状態表示は、板に映ると邪魔なので通常モード(画面確認)のときだけ出す
+function applyLogVisibility() { $('log').style.display = $('mode').value === 'plain' ? '' : 'none'; }
 
 /* ===== 球体の描画(加算合成。黒背景ほど明るく見える) ===== */
 function hsl(h, s, l, a) { return `hsla(${h},${s}%,${l}%,${a})`; }
@@ -94,7 +98,55 @@ function lerp(a, b, k) { return a + (b - a) * k; }
 
 const TICKER_TEXT = 'HOLOGRAM AI  ・  こんにちは、話しかけてね  ・  ';
 let tickerText = TICKER_TEXT;
+
+/* ===== 大きな字幕: 話しかけた言葉(認識結果)と、案内・エラー。板で正しい向きに映る =====
+   ルミが話し始めるまでは字幕、話し始めたら返事が流れる帯に切り替える */
+let userCap = { text: '', at: -1e9, partial: false }, notice = { text: '', at: -1e9 }, speakAt = -1e9;
+function setUserCap(t, partial) { userCap = { text: t, at: performance.now(), partial: !!partial }; }
+function setNotice(t) { notice = { text: t, at: performance.now() }; }
+function capInfo() {
+  const now = performance.now();
+  if (now - notice.at < 6000) return { text: notice.text, life: 6000 - (now - notice.at), warn: true, partial: false };
+  if (!userCap.text) return null;
+  const age = now - userCap.at;
+  const show = state === 'speaking' ? now - speakAt < 2500
+    : (state === 'listening' || state === 'thinking') ? age < 20000 : age < 8000;
+  if (!show) return null;
+  const life = state === 'speaking' ? 2500 - (now - speakAt) : userCap.partial ? 4000 - age : 8000;
+  return life > 0 ? { text: userCap.text, life, warn: false, partial: userCap.partial } : null;
+}
+function drawCaption(R, cap) {
+  const fs = Math.max(20, Math.min(R * 0.36, W * 0.07)), maxW = W * 0.86;
+  ctx.save();
+  ctx.font = `bold ${fs}px "Hiragino Kaku Gothic ProN", "Noto Sans JP", sans-serif`;
+  ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+  const lines = []; let line = '';
+  for (const ch of cap.text.replace(/\n+/g, ' ')) {
+    if (ctx.measureText(line + ch).width > maxW && line) { lines.push(line); line = ch; } else line += ch;
+  }
+  lines.push(line);
+  const shown = lines.slice(-3), lh = fs * 1.35;
+  // 画面からはみ出さないように位置を調整する(板で上下反転していても、画面上の位置で判断)
+  let y0 = R * 2.35;
+  const m = ctx.getTransform(), d = m.d / DPR;
+  if (Math.abs(d) > 0.001) {
+    const scr = y => m.f / DPR + d * y;
+    const top = Math.min(scr(y0 - fs * 0.7), scr(y0 + (shown.length - 1) * lh + fs * 0.7));
+    const bot = Math.max(scr(y0 - fs * 0.7), scr(y0 + (shown.length - 1) * lh + fs * 0.7));
+    const limitBot = H - ($('ui').classList.contains('hidden') ? 10 : $('ui').offsetHeight + 10);
+    let shift = 0;                       // 画面上でずらしたい量(下が正)
+    if (bot > limitBot) shift = limitBot - bot; else if (top < 10) shift = 10 - top;
+    y0 += shift / d;
+  }
+  const a = Math.min(1, cap.life / 1200) * (cap.partial ? 0.8 : 1);
+  ctx.shadowColor = hsl(cur.h, 90, 70, a * 0.9); ctx.shadowBlur = fs * 0.4;
+  ctx.fillStyle = cap.warn ? `rgba(255,190,110,${a})` : hsl(cur.h, 35, 96, a);
+  shown.forEach((l, i) => ctx.fillText(l, 0, y0 + i * lh));
+  ctx.restore();
+}
 function drawTicker(R, time) {
+  const cap = capInfo();
+  if (cap) { drawCaption(R, cap); return; }   // 字幕が出ている間は、流れる帯を止める
   // キャラと重ならない帯に、一定の文章を左から右へ流す(板の反射で正しい向きに読める)
   const half = W * 0.45;
   const fs = Math.max(16, R * 0.3);
@@ -619,7 +671,7 @@ function beginUtterance() {
   };
   ws.onmessage = ev => {
     let m; try { m = JSON.parse(ev.data); } catch (_) { return; }
-    if (m.type === 'partial' && m.text) log('あなた: ' + m.text + ' …');
+    if (m.type === 'partial' && m.text) { log('あなた: ' + m.text + ' …'); setUserCap(m.text, true); }
     else if (m.type === 'final') {
       const t = (m.text || '').trim(); resetStt(false);
       if (t) handleUtterance(t); else setState(micOn ? 'listening' : 'idle');
@@ -692,7 +744,7 @@ async function getReply(text) {
 async function handleUtterance(text) {
   if (state === 'thinking' || state === 'speaking') return;
   ensureAudio();
-  setState('thinking'); level = 0; log('あなた: ' + text);
+  setState('thinking'); level = 0; log('あなた: ' + text); setUserCap(text, false);
   clearTimeout(emotionTimer); emotion = 'neutral';
   let out;
   try { out = await getReply(text); } catch (e) { out = { reply: 'ごめんね、うまくつながらなかったみたい。', emotion: 'sad' }; }
@@ -705,7 +757,7 @@ async function handleUtterance(text) {
 let playing = null;
 async function speak(text, emo) {
   emotion = EMO[emo] ? emo : 'neutral';
-  tickerText = text + '  ・  ';
+  tickerText = text + '  ・  '; speakAt = performance.now();
   setState('speaking'); log('ルミ: ' + text);
   const done = () => {
     level = 0; playing = null;
@@ -749,6 +801,7 @@ $('ui').addEventListener('pointerdown', e => e.stopPropagation());
 for (const id of ['char', 'mode', 'size', 'pos']) $(id).addEventListener('change', () => { try { localStorage.setItem('orb2.' + id, $(id).value); } catch (_) {} });
 for (const id of ['char', 'mode', 'size', 'pos']) $(id).addEventListener('input', () => { try { localStorage.setItem('orb2.' + id, $(id).value); } catch (_) {} });
 for (const id of ['char', 'mode', 'size', 'pos']) { try { const v = localStorage.getItem('orb2.' + id); if (v) $(id).value = v; } catch (_) {} }
+applyLogVisibility(); $('mode').addEventListener('change', applyLogVisibility); $('mode').addEventListener('input', applyLogVisibility);
 log();
 </script>
 </body>

@@ -743,15 +743,15 @@ function drawMascot(R, time) {
    返答API が actions に動きの名前を入れて返す。話し始めるときに playActions() で受け取る */
 const ACT_DUR = { raise_right: 4, raise_left: 4, raise_both: 4, wave: 3, clap: 3, spin: 1.8, jump: 1.6, close_eyes: 4, open_eyes: 0.4,
   cry: 4.5, laugh: 3.5, angry: 3.5, shy: 3.5, bow: 1.8, nod: 1.8, shake_head: 1.8, dance: 5, sleep: 6.5,
-  wink_left: 1.6, wink_right: 1.6, peace: 3, kiss: 2.6, heart: 3.5, shiver: 3.5, sit: 4, stretch: 3.5, yawn: 3.5, point: 2.5, shrug: 2.5, sulk: 3.5,
+  wink_left: 1.6, wink_right: 1.6, peace: 3, kiss: 2.6, heart: 3.5, shiver: 3.5, sit: 4, stretch: 3.5, yawn: 3.5, eat: 5, point: 2.5, shrug: 2.5, sulk: 3.5,
   surprise: 2, think: 3.5, sway: 5, march: 4, banzai: 2.5, faint: 3.6, tilt_head: 2.5, look_around: 3.5, flap: 3.5, sparkle: 3, guts: 3, cheer: 3.5, hop: 3.5, lower: 0.1, scared: 6, analyze: 4.5, guard: 4.2 };
 // 動きごとに出るパーティクル(1秒あたりの数)
 const PT_EMIT = { banzai: { confetti: 30 }, cheer: { confetti: 32, star: 14 }, guts: { star: 26, confetti: 10 }, dance: { note: 12, star: 16 }, spin: { star: 44 }, laugh: { star: 22, note: 4 },
-  cry: { drop: 24 }, shy: { heart: 6 }, sparkle: { star: 46 }, kiss: { heart: 9 }, heart: { heart: 12 }, jump: { star: 34 }, hop: { star: 16 }, sleep: { zzz: 2.2 }, angry: { steam: 22 }, sulk: { steam: 8 },
+  cry: { drop: 24 }, shy: { heart: 6 }, sparkle: { star: 46 }, kiss: { heart: 9 }, heart: { heart: 12 }, jump: { star: 34 }, hop: { star: 16 }, sleep: { zzz: 2.2 }, eat: { food: 3.2, crumb: 14 }, angry: { steam: 22 }, sulk: { steam: 8 },
   scared: { drop: 10 }, shiver: { drop: 8 }, faint: { star: 16 }, wave: { star: 10 }, clap: { star: 20 }, peace: { star: 18 }, analyze: { sym: 20, dot: 18 }, guard: { hex: 30, spark: 16 } };
 let actQueue = [], actCur = null, curFx = null, actFrame = -1;
 // 成長段階で、できる動きが変わる(卵・ひかりのたま=ゆれるだけ / ちびルミ=基本の動き / ルミ以上=ぜんぶ。サーバーと同じ)
-const ACT_BASIC = ['wave', 'nod', 'tilt_head', 'sway', 'jump', 'hop', 'look_around', 'sparkle', 'shy', 'laugh', 'cry', 'bow', 'spin', 'yawn', 'sit', 'surprise', 'shake_head', 'heart', 'scared', 'guard', 'lower', 'sulk', 'banzai', 'raise_both', 'cheer', 'clap'];
+const ACT_BASIC = ['wave', 'nod', 'tilt_head', 'sway', 'jump', 'hop', 'look_around', 'sparkle', 'shy', 'laugh', 'cry', 'bow', 'spin', 'yawn', 'eat', 'sit', 'surprise', 'shake_head', 'heart', 'scared', 'guard', 'lower', 'sulk', 'banzai', 'raise_both', 'cheer', 'clap'];
 const ACT_TINY = ['sparkle', 'sway', 'tilt_head', 'nod', 'look_around'];
 const actionAllowed = (a) => G.stage >= 3 ? true : G.stage === 2 ? ACT_BASIC.includes(a) : ACT_TINY.includes(a);
 function playActions(list) {
@@ -795,6 +795,7 @@ function actPose(n, u, d) {
     case 'shiver': f.mouth = 'wavy'; f.open = 0; f.arms = { L: [-1.3, 0.8], R: [-1.3, -0.8] }; f.roll = s(u * 45) * 0.035; f.yaw = s(u * 37) * 0.05; break;
     case 'sit': f.squash = 0.42 * env; f.pitch = 0.18 * env; f.arms = { L: [-0.9, 0.5], R: [-0.9, -0.5] }; break;   // しゃがむ: 深く縮んで、うつむいて膝をかかえる
     case 'stretch': f.arms = { L: [0, -2.75, 0.7, 0.3], R: [0, 2.75, 0.7, 0.3] }; f.bodyPitch = -0.18 * env; f.pitch = -0.25 * env; f.closeEyes = true; f.open = 0.5 * env; break;
+    case 'eat': { const c = Math.abs(s(u * 9)); f.mouth = 'o'; f.open = 0.05 + c * 0.35; f.emo = 'happy'; f.arms = { R: [-2.2, -0.25 + s(u * 2.2) * 0.15] }; f.pitch = 0.06 + c * 0.04; f.headRoll = s(u * 4.5) * 0.04; f.hearts = u > d - 1.2; break; }   // もぐもぐ食べる(手を口もとへ)
     case 'yawn': f.open = 0.9 * env * (0.7 + 0.3 * s(u * 2)); f.closeEyes = true; f.arms = { R: [-2.3, -0.2] }; f.pitch = -0.15 * env; break;
     case 'point': f.arms = { R: [-1.55, 0.15, 0.1, 0.4] }; break;
     case 'shrug': f.mouth = 'flat'; f.open = 0; f.arms = { L: [0, -0.9, 0.1, 0], R: [0, 0.9, 0.1, 0] }; f.headRoll = 0.2 * s(u * 3) * env; f.pitch = 0.1 * env; break;
@@ -846,7 +847,7 @@ const FAST_ACTIONS = [
   [/(目を?(瞑|つぶ|閉じ))/, 'close_eyes'], [/目を?(開け|あけ|ひらい)/, 'open_eyes'], [/(泣いて|なみだ|涙)/, 'cry'], [/(笑って|わらって)/, 'laugh'],
   [/(怒って|おこって)/, 'angry'], [/(おじぎ|お辞儀)/, 'bow'], [/(おどって|踊って|ダンス)/, 'dance'], [/(寝て|ねて|おやすみ|横になって|ごろん|寝転)/, 'sleep'],
   [/ウインク|ウィンク/, 'wink_right'], [/ピース/, 'peace'], [/(投げキス|キスして)/, 'kiss'], [/ハート/, 'heart'], [/(ぶるぶる|震えて)/, 'shiver'],
-  [/(しゃがん|座って|すわって|かがん)/, 'sit'], [/(のび|伸び)/, 'stretch'], [/あくび/, 'yawn'], [/(指さし|ゆびさし)/, 'point'],
+  [/(しゃがん|座って|すわって|かがん)/, 'sit'], [/(のび|伸び)/, 'stretch'], [/あくび/, 'yawn'], [/(食べて|たべて|もぐもぐ|ご飯を?食|ごはんを?食|おやつ)/, 'eat'], [/(指さし|ゆびさし)/, 'point'],
   [/(すねて|むくれて)/, 'sulk'], [/(きょろきょろ)/, 'look_around'], [/(足ぶみ|足踏み)/, 'march'], [/(かしげて|傾げて)/, 'tilt_head'], [/(きらきら|キラキラ)/, 'sparkle'], [/(分析|ぶんせき|研究者|科学者|博士|はかせ|めがね|メガネ|眼鏡)/, 'analyze'],
   [/(怖がって|こわがって|おばけ|お化け|幽霊|ゆうれい|ホラー|怖い|こわい)/, 'scared'], [/ガッツポーズ|ファイト/, 'guts'], [/(応援|フレーフレー|がんばれ)/, 'cheer'], [/(ぴょんぴょん|ぴょこぴょこ)/, 'hop'],
 ];
@@ -898,6 +899,8 @@ function ptEmitAll(dt, hue, fx, lv, speaking) {
   if (e.note) ptRate('e_note', e.note, dt, () => ptSpawn('text', { x: rnd(-1.3, 1.3), y: rnd(-1.2, 0.2), vx: rnd(-0.2, 0.2), vy: -rnd(0.3, 0.6), life: rnd(1.2, 2), size: rnd(0.12, 0.2), h: rnd(0, 360), s: 95, l: 72, ch: ptPick(['♪', '♫', '♩']), front: true }));
   if (e.drop) ptRate('e_drop', e.drop, dt, () => { const sd = Math.random() < 0.5 ? -1 : 1; ptSpawn('drop', { x: sd * rnd(0.3, 0.55), y: -0.2, vx: sd * rnd(0.05, 0.4), vy: rnd(-0.2, 0.2), g: 1.6, life: 1.3, size: rnd(0.03, 0.06), h: 200, s: 95, l: 75, front: true }); });
   if (e.heart) ptRate('e_heart', e.heart, dt, () => ptSpawn('heart', { x: rnd(-1.2, 1.2), y: rnd(0, 1.2), vx: rnd(-0.15, 0.15), vy: -rnd(0.35, 0.7), life: rnd(1.6, 2.6), size: rnd(0.07, 0.15), h: 335, s: 95, l: 70, front: true }));
+  if (e.food) ptRate('e_food', e.food, dt, () => { const sd = Math.random() < 0.5 ? -1 : 1; ptSpawn('text', { x: sd * rnd(1.2, 1.7), y: rnd(0.9, 1.5), vx: -sd * rnd(0.9, 1.3), vy: -rnd(0.9, 1.3), life: 0.95, size: rnd(0.2, 0.3), rot: rnd(-0.4, 0.4), ch: ptPick(['🍙', '🍰', '🍎', '🍩', '🍓', '🍜', '🍡', '🍪']), front: true }); });   // 食べ物が、口もとへ飛んでくる
+  if (e.crumb) ptRate('e_crumb', e.crumb, dt, () => ptSpawn('dot', { x: rnd(-0.18, 0.18), y: rnd(0.0, 0.15), vx: rnd(-0.35, 0.35), vy: -rnd(0.05, 0.35), g: 1.0, life: rnd(0.4, 0.8), size: rnd(0.015, 0.035), h: rnd(20, 50), s: 80, l: 78, front: true }));   // もぐもぐのかけら
   if (e.zzz) ptRate('e_zzz', e.zzz, dt, () => ptSpawn('text', { x: 0.8, y: -0.7, vx: 0.18, vy: -0.28, life: 2.6, size: 0.15, grow: 0.06, h: 215, s: 90, l: 82, ch: ptPick(['Z', 'z', 'Z']), front: true }));
   if (e.steam) ptRate('e_steam', e.steam, dt, () => { const sd = Math.random() < 0.5 ? -1 : 1; ptSpawn('steam', { x: sd * 0.75, y: -0.85, vx: sd * rnd(0.1, 0.3), vy: -rnd(0.3, 0.6), life: rnd(1, 1.8), size: 0.07, grow: 0.12, h: rnd(0, 18), s: 95, l: 58, front: true }); });
   if (e.sym) ptRate('e_sym', e.sym, dt, () => ptSpawn('text', { orb: 1, ang: rnd(0, 6.283), rad: rnd(0.95, 1.5), dr: rnd(0.04, 0.12), w: rnd(0.7, 1.4) * (Math.random() < 0.5 ? -1 : 1), cx: 0, cy: -0.3, life: rnd(2, 3.2), size: rnd(0.12, 0.2), h: rnd(95, 175), s: 95, l: 70, ch: ptPick(PT_SYMS), front: true }));
@@ -1220,7 +1223,7 @@ async function getReply(text) {
 const ACKS = ['はーい！', 'こうかな？', 'えへへ、どうかな？', 'まかせて！', 'いくよー！'];
 // 動きに合う定型の一言(声は事前に作ってあるので、すぐ返せる)。ここにない動きは ACKS から選ぶ
 const ACK_BY = { sleep: ['ふぁ…おやすみなさい', 'すぅ…おやすみ…'], scared: ['えっ、こわい話…？ひえぇ…', 'きゃー！こわいよー！'], faint: ['きゅぅ…', 'ばたん…'],
-  cry: ['うぅ…ぐすん'], laugh: ['あはは！', 'えへへ、あはは！'], angry: ['むーっ！'], lower: ['はーい'], sit: ['よいしょ…'], yawn: ['ふぁぁ…ねむい…'] };
+  cry: ['うぅ…ぐすん'], laugh: ['あはは！', 'えへへ、あはは！'], angry: ['むーっ！'], lower: ['はーい'], sit: ['よいしょ…'], yawn: ['ふぁぁ…ねむい…'], eat: ['いただきまーす！もぐもぐ…おいしい！', 'もぐもぐ…おいしー！'] };
 const GRUMPY_ACKS = ['はいはい…', 'もう、しかたないなぁ', 'むぅ…やればいいんでしょ', 'ふんっ、やるけどさ'];   // いかりが30以上のときの一言
 const pickAck = (a) => { const l = mood.anger >= 30 ? GRUMPY_ACKS : (ACK_BY[a && a[0]] || ACKS); return l[Math.floor(Math.random() * l.length)]; };
 async function handleUtterance(text) {

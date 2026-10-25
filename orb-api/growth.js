@@ -84,7 +84,7 @@ function adminSet(userId, { add, stage, reset, kind } = {}) {
 }
 
 // 段階ごとにできる動き(ちびルミ=基本の動き、ルミ以上=ぜんぶ、卵・光のたま=ゆれるだけ)
-const BASIC = ['wave', 'nod', 'tilt_head', 'sway', 'jump', 'hop', 'look_around', 'sparkle', 'shy', 'laugh', 'cry', 'bow', 'spin', 'yawn', 'sit', 'surprise', 'shake_head', 'heart', 'scared', 'guard', 'lower', 'sulk', 'banzai', 'raise_both', 'cheer', 'clap'];
+const BASIC = ['wave', 'nod', 'tilt_head', 'sway', 'jump', 'hop', 'look_around', 'sparkle', 'shy', 'laugh', 'cry', 'bow', 'spin', 'yawn', 'eat', 'sit', 'surprise', 'shake_head', 'heart', 'scared', 'guard', 'lower', 'sulk', 'banzai', 'raise_both', 'cheer', 'clap'];
 const TINY = ['sparkle', 'sway', 'tilt_head', 'nod', 'look_around'];
 const filterActions = (stage, list) => (Array.isArray(list) ? list : []).filter(a => stage >= 3 ? true : stage === 2 ? BASIC.includes(a) : TINY.includes(a));
 const can = { research: (s) => s >= 3, topic: (s) => s >= 2, weather: (s) => s >= 2, guard: (s) => s >= 2, analyze: (s) => s >= 3 };

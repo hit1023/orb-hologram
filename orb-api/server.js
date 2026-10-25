@@ -10,6 +10,7 @@ const { spawn } = require('child_process');
 const store = require('./store');
 const moodLib = require('./mood');
 const memory = require('./memory');
+const news = require('./news');
 
 const PORT = +process.env.PORT || 3000;
 const MODEL = process.env.CLAUDE_MODEL || 'haiku';
@@ -149,6 +150,24 @@ function feelingBlock(user, m) {
 返答は2〜3文。いまの態度に合った口調で答える(嫌いなら毒づいてよい、好きなら素直に照れながら)。最後に聞き返さなくてよい。`;
 }
 const memoryAgo = (ts) => { const m = Math.floor((Date.now() - ts) / 60000); if (m < 60) return `${Math.max(1, m)}分前`; const h = Math.floor(m / 60); if (h < 24) return `${h}時間前`; const d = Math.floor(h / 24); return d < 31 ? `${d}日前` : `${Math.floor(d / 30)}か月前`; };
+
+// ---- 興味のあるキーワード: 会話の履歴から、その人が好きなもの・よく話すものを、LLMが数語だけ拾う(ニュース検索に使う) ----
+const interestBusy = new Set();
+async function extractInterests(user, force = false) {
+  if (interestBusy.has(user.id)) return;
+  const total = store.countTurns(user.id), cur = store.getInterests(user.id);
+  if (total < 3 || (!force && cur.list.length && total - cur.turns < 6)) return;
+  interestBusy.add(user.id);
+  try {
+    const texts = store.recentTurns(user.id, 20).map(t => t.user_text).filter(t => !t.startsWith('（ルミから話題）')).join('\n');
+    const out = await cfText('会話の履歴から、この人が興味を持っていること(好きなもの・趣味・仕事・よく話す話題)を、ニュース検索に使えるキーワードで最大3つ選ぶ。1語か2語の名詞で、固有名詞・具体的な言葉を優先する。挨拶・「ありがとう」・動きの命令(手をあげて等)・ルミへの質問は除く。出力はJSON配列だけ。例: [\"カレー\",\"Cloudflare\",\"猫\"]。該当なしなら []。', texts, 120);
+    const m = out && out.match(/\[[\s\S]*?\]/);
+    if (m) {
+      const list = JSON.parse(m[0]).filter(x => typeof x === 'string' && x.trim().length >= 2 && x.length <= 20).map(x => x.trim()).slice(0, 3);
+      store.saveInterests(user.id, list, total); console.log(`[interest] ${user.username} ${JSON.stringify(list)}`);
+    }
+  } catch (_) { /* 失敗しても会話は続ける */ } finally { interestBusy.delete(user.id); }
+}
 
 function parseReply(raw) {
   const m = raw.match(/\{[\s\S]*\}/);
@@ -392,11 +411,30 @@ http.createServer(async (req, res) => {
 
     // ここから先(返事・動き・声)は、ログインした人だけ
     let user = null;
-    if (url === '/api/chat' || url === '/api/act' || url === '/api/tts') {
+    if (url === '/api/chat' || url === '/api/act' || url === '/api/tts' || url === '/api/topic') {
       user = currentUser(req);
       if (!user) return send(res, 401, { error: 'login required' });
     }
 
+    if (req.method === 'POST' && url === '/api/topic') {                  // ルミから話題を出す: その人の興味に合うニュースを1つ選んで、自分から話しかける
+      const t0 = Date.now();
+      let ints = store.getInterests(user.id);
+      if (!ints.list.length) { await Promise.race([extractInterests(user, true), new Promise(r => setTimeout(r, 3500))]); ints = store.getInterests(user.id); }
+      const n = await news.pickNews(user.id, ints.list);
+      if (!n) return send(res, 200, { none: true });
+      const m = moodLib.decayed(store.loadMoodRow(user.id));
+      const system = SYSTEM + `\n\n話し相手のユーザー名は「${user.username}」。` + moodLib.guide(m, false, (store.loadMoodRow(user.id) || {}).impression);
+      const stored = store.recentTurns(user.id, 6).flatMap(t => [{ role: 'user', text: t.user_text }, { role: 'ai', text: t.reply }]);
+      const prompt = `(相手はいま話しかけていない。ルミのほうから、ニュースの話題を切り出す。)\n見出し: 「${n.title}」${n.source ? `(${n.source})` : ''}${n.keyword ? `\n相手が興味を持っていそうなこと: ${n.keyword}` : ''}\n` +
+        '見出しだけを根拠に、「そういえばこんなニュースがあったよ」と、ルミの口調で1〜3文で話しかける。見出しにない事実は作らない。断定せず「〜らしいよ」と伝える。最後に相手の意見や経験を軽く聞く。actionsは[]。';
+      let raw; try { raw = await runCloudflare(prompt, stored, system); } catch (e) { raw = await runClaude(buildPrompt(prompt, stored), system); }
+      const out = parseReply(raw); out.actions = [];
+      if (m.anger >= 60 && ['neutral', 'happy'].includes(out.emotion)) out.emotion = 'angry';
+      store.addTurn(user.id, `（ルミから話題）${n.title}`.slice(0, 200), out.reply, out.emotion);
+      out.news = { title: n.title, source: n.source, keyword: n.keyword || '' }; out.mood = { ...moodLib.round(m), stance: moodLib.stance(m) };
+      console.log(`[topic] ${user.username} ${Date.now() - t0}ms kw=${n.keyword || '-'} ${n.title.slice(0, 40)} -> ${out.reply.slice(0, 60)}`);
+      return send(res, 200, out);
+    }
     if (req.method === 'POST' && url === '/api/chat') {
       const { text, history } = await readJson(req);
       if (!text || typeof text !== 'string') return send(res, 400, { error: 'text required' });
@@ -423,7 +461,8 @@ http.createServer(async (req, res) => {
       out.mood = turn.mood; out.moodLabel = turn.moodLabel; out.stance = turn.stance;
       out.memories = mems.map(m => m.user_text.replace(/\s+/g, ' ').slice(0, 16));   // 思い出した言葉(画面で泡にする)
       memory.remember(user.id, text.slice(0, 300), out.reply, out.emotion);   // 履歴に保存して、あとから思い出せるようにする
-      analyzeFeelings(user, turn.raw).catch(() => {});                         // 履歴×気分から、この人への本音を分析(裏で)
+      analyzeFeelings(user, turn.raw).catch(() => {});
+      extractInterests(user).catch(() => {});                                  // 興味のあるキーワードも、ときどき更新                         // 履歴×気分から、この人への本音を分析(裏で)
       console.log(`[chat] ${user.username} ${via} ${Date.now() - t0}ms ask=${turn.askFeeling ? 1 : 0} mem=${mems.length} mood=${turn.mood.joy}/${turn.mood.anger}/${turn.mood.sadness}/♥${turn.mood.affinity} ${turn.stance} ${out.emotion} [${out.actions}]${turn.refused ? ' (ことわった)' : ''} ${out.reply}`);
       return send(res, 200, out);
     }

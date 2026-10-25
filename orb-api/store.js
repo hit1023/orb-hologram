@@ -38,10 +38,15 @@ db.exec(`
     vec BLOB
   );
   CREATE INDEX IF NOT EXISTS turns_user ON turns (user_id, id);
+  CREATE TABLE IF NOT EXISTS news_told (
+    user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    h TEXT NOT NULL, ts INTEGER NOT NULL,
+    PRIMARY KEY (user_id, h)
+  );
   PRAGMA foreign_keys = ON;
 `);
 db.exec('PRAGMA foreign_keys = ON');
-for (const col of ["affinity REAL NOT NULL DEFAULT 50", "impression TEXT", "impr_turns INTEGER NOT NULL DEFAULT 0", "impr_stance TEXT", "impr_at INTEGER NOT NULL DEFAULT 0"]) {
+for (const col of ["interests TEXT", "int_turns INTEGER NOT NULL DEFAULT 0", "affinity REAL NOT NULL DEFAULT 50", "impression TEXT", "impr_turns INTEGER NOT NULL DEFAULT 0", "impr_stance TEXT", "impr_at INTEGER NOT NULL DEFAULT 0"]) {
   try { db.exec(`ALTER TABLE moods ADD COLUMN ${col}`); } catch (_) { /* もうある */ }
 }
 
@@ -140,6 +145,18 @@ function saveMoodRow(userId, m) {
 // ルミの「この人への本音」メモ(LLMが履歴と気分から書く)
 const saveImpression = (userId, text, turns, stance) =>
   db.prepare('UPDATE moods SET impression = ?, impr_turns = ?, impr_stance = ?, impr_at = ? WHERE user_id = ?').run(text, turns, stance, now(), userId);
+// 興味のあるキーワード(会話の履歴からLLMが拾う)と、もう話したニュース
+const saveInterests = (userId, list, turns) => db.prepare('UPDATE moods SET interests = ?, int_turns = ? WHERE user_id = ?').run(JSON.stringify(list), turns, userId);
+function getInterests(userId) {
+  const r = db.prepare('SELECT interests, int_turns FROM moods WHERE user_id = ?').get(userId);
+  let list = []; try { list = JSON.parse((r && r.interests) || '[]'); } catch (_) {}
+  return { list: Array.isArray(list) ? list : [], turns: (r && r.int_turns) || 0 };
+}
+const toldNews = (userId) => new Set(db.prepare('SELECT h FROM news_told WHERE user_id = ?').all(userId).map(r => r.h));
+function markNewsTold(userId, h) {
+  db.prepare('INSERT OR IGNORE INTO news_told (user_id, h, ts) VALUES (?, ?, ?)').run(userId, h, now());
+  db.prepare('DELETE FROM news_told WHERE user_id = ? AND ts < ?').run(userId, now() - 30 * 86400000);
+}
 const resetMood = (userId) => db.prepare('DELETE FROM moods WHERE user_id = ?').run(userId);
 
 // ---- 会話履歴(1回のやりとり=1行)。vec は意味検索用の埋め込みベクトル ----
@@ -157,5 +174,5 @@ const turnStats = (userId) => db.prepare('SELECT COUNT(*) AS n, MIN(created_at) 
 const countTurns = (userId) => db.prepare('SELECT COUNT(*) AS n FROM turns WHERE user_id = ?').get(userId).n;
 const clearTurns = (userId) => db.prepare('DELETE FROM turns WHERE user_id = ?').run(userId).changes;
 
-module.exports = { turnStats, addTurn, setTurnVec, recentTurns, turnsWithVec, countTurns, clearTurns, createUser, countUsers, countAdmins, listUsers, getUser, deleteUser, setPassword, checkLogin, verifyUserPassword,
+module.exports = { saveInterests, getInterests, toldNews, markNewsTold, turnStats, addTurn, setTurnVec, recentTurns, turnsWithVec, countTurns, clearTurns, createUser, countUsers, countAdmins, listUsers, getUser, deleteUser, setPassword, checkLogin, verifyUserPassword,
   createSession, sessionUser, deleteSession, loadMoodRow, saveMoodRow, saveImpression, resetMood, validateNewUser };

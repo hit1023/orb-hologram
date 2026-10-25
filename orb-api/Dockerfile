@@ -3,7 +3,7 @@ FROM node:22-slim
 RUN useradd -m -s /bin/bash appuser
 RUN npm install -g @anthropic-ai/claude-code
 WORKDIR /app
-COPY server.js store.js mood.js memory.js ./
+COPY server.js store.js mood.js memory.js news.js ./
 RUN mkdir -p /data/claude-config /data/db && chown -R appuser:appuser /data/claude-config /data/db
 ENV CLAUDE_CONFIG_DIR=/data/claude-config PORT=3000 DB_PATH=/data/db/orb.db
 USER appuser

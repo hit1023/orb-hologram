@@ -65,6 +65,7 @@
   </select>
   <button id="mic">マイク開始</button>
   <button id="duplex" title="話している途中でも割り込める(全二重)">割込: ON</button>
+  <button id="topicBtn" title="しばらく話しかけないと、ルミがニュースの話題を出す(あなたの興味に合わせて)">話題: ON</button>
   <input id="say" placeholder="話しかける(文字でもOK)" enterkeyhint="send">
   <label>大きさ<input id="size" type="range" min="25" max="100" value="60"></label>
   <label>位置<input id="pos" type="range" min="0" max="100" value="50"></label>
@@ -1020,6 +1021,7 @@ const chatHistory = [];     // {role:'user'|'ai', text}
 let emotion = 'neutral';
 let emotionTimer = null;
 let lastUserText = '';
+let lastAct = performance.now();   // 最後にやりとりした時刻(しばらく静かなら、ルミから話題を出す)
 let me = null, mood = { joy: 50, anger: 0, sadness: 0, affinity: 50 };   // ログイン中のユーザーと、ルミの気分(サーバーが話しかけ方から更新する)
 const baseEmo = () => mood.anger >= 45 ? 'angry' : mood.sadness >= 50 ? 'sad' : mood.joy >= 80 ? 'happy' : 'neutral';   // 何も話していないときの顔つき
 
@@ -1166,7 +1168,7 @@ const pickAck = (a) => { const l = mood.anger >= 30 ? GRUMPY_ACKS : (ACK_BY[a &&
 async function handleUtterance(text) {
   if (state === 'thinking' || state === 'speaking') return;
   ensureAudio();
-  const myTurn = ++turn; lastUserText = text;
+  const myTurn = ++turn; lastUserText = text; lastAct = performance.now();
   setState('thinking'); level = 0; log('あなた: ' + text); setUserCap(text, false);
   const faAll = fastActions(text), hold = mood.anger >= 50 && faAll.length > 0;   // 不機嫌なときは、サーバーの判断(ことわるかも)を待ってから動く
   const fa = hold ? [] : faAll, ana = ASK_FEELING_RX.test(text);
@@ -1228,7 +1230,7 @@ async function speak(text, emo, actions) {
   replyCap = { text, started: false, at: 0, dur: 0, endAt: 0 };
   setState('speaking'); log('ルミ: ' + text);
   const done = () => {
-    level = 0; playing = null; replyCap.endAt = performance.now();
+    level = 0; playing = null; replyCap.endAt = performance.now(); lastAct = performance.now();
     emotionTimer = setTimeout(() => { emotion = baseEmo(); }, 5000);
     if (micOn) { resetStt(); } else setState('idle');
   };
@@ -1354,6 +1356,30 @@ async function refreshMe() {
   } catch (_) {}
 }
 refreshMe(); setInterval(() => { if (me) refreshMe(); }, 60000);   // 気分は時間がたつと落ち着くので、ときどき読み直す
+
+
+// --- ルミから話題を出す: しばらく静かなとき、あなたの興味に合うニュース(Googleニュースの配信)を、ルミのほうから話しかける ---
+let topicOn = true; try { topicOn = localStorage.getItem('orb.topic') !== '0'; } catch (_) {}
+let topicBusy = false, topicCount = 0;
+const paintTopic = () => { $('topicBtn').textContent = '話題: ' + (topicOn ? 'ON' : 'OFF'); $('topicBtn').classList.toggle('on', topicOn); };
+$('topicBtn').onclick = () => { topicOn = !topicOn; try { localStorage.setItem('orb.topic', topicOn ? '1' : '0'); } catch (_) {} paintTopic(); lastAct = performance.now(); };
+paintTopic();
+try { if (new URLSearchParams(location.search).get('topic') === '0') { topicOn = false; paintTopic(); } } catch (_) {}
+for (const ev of ['pointerdown', 'keydown']) addEventListener(ev, () => { lastAct = performance.now(); }, { passive: true });
+const topicQuiet = () => state === 'idle' || (state === 'listening' && !vad.active && !vad.waiting && performance.now() - (vad.lastVoice || 0) > 6000);
+setInterval(async () => {
+  if (!topicOn || !me || topicBusy || document.visibilityState !== 'visible' || !actx || actx.state !== 'running' || !topicQuiet()) return;
+  const wait = new URLSearchParams(location.search).get('topicfast') ? 8000 : (topicCount === 0 ? 75000 : 240000);   // 最初は75秒、そのあとは4分あけて
+  if (performance.now() - lastAct < wait) return;
+  topicBusy = true; lastAct = performance.now();
+  try {
+    const r = await jsend('POST', '/api/topic', {}); const j = await r.json();
+    if (r.ok && j.reply && !j.none && topicQuiet() && performance.now() - lastAct < 30000) {
+      topicCount++; setMood(j.mood); chatHistory.push({ role: 'ai', text: j.reply });
+      log('📰 ' + j.news.title + (j.news.source ? ' - ' + j.news.source : '')); speak(j.reply, j.emotion, []);
+    }
+  } catch (_) {} finally { topicBusy = false; }
+}, 10000);
 
 // --- 管理(ユーザー登録・削除・パスワード再設定・気分リセット) ---
 const fmtDate = (t) => t ? new Date(t).toLocaleString('ja-JP', { month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' }) : 'まだ';

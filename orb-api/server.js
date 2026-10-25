@@ -554,7 +554,10 @@ http.createServer(async (req, res) => {
         via = 'claude'; raw = await runClaude(buildPrompt(text.slice(0, 500), hist), system);
       }
       const out = parseReply(raw);
-      if (st < 3) out.research = '';                                                  // 調べ物はルミになってから
+      if (st < 3) {                                                                   // 調べ物はルミになってから(できないのに「調べておくね」と約束しない)
+        out.research = '';
+        if (/(調べて(み|お)る|調べておく|あとで教え|後で教え)/.test(out.reply)) out.reply = st === 2 ? 'それは、まだ、わからないの' : 'わかんない';
+      }
       if (turn.refused) out.actions = ['sulk'];
       out.actions = growth.filterActions(st, out.actions);
       let rq = out.research || '';                                                  // あとで調べて報告する

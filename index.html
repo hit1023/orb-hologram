@@ -834,7 +834,14 @@ function ptEmitAll(dt, hue, fx, lv, speaking) {
   ptRate('dust', 14, dt, () => ptSpawn('dot', { x: rnd(-2.3, 2.3), y: rnd(-1.9, 1.9), vy: -rnd(0.04, 0.2), life: rnd(2, 4.5), size: rnd(0.012, 0.032), h: hue, s: 60, l: 92 }));
   if (m.joy >= 62) ptRate('conf', (m.joy - 60) * 0.55, dt, () => ptSpawn('confetti', { x: rnd(-2, 2), y: -2.3, vx: rnd(-0.15, 0.15), vy: rnd(0.25, 0.6), life: rnd(3, 5), size: rnd(0.05, 0.1), h: rnd(0, 360), s: 95, l: 65, rot: rnd(0, 6), vr: rnd(-6, 6) }));
   if ((m.affinity ?? 50) >= 68 && m.anger < 40) ptRate('luv', (m.affinity - 65) * 0.25, dt, () => ptSpawn('heart', { x: rnd(-1.4, 1.4), y: rnd(0.2, 1.3), vx: rnd(-0.1, 0.1), vy: -rnd(0.25, 0.5), life: rnd(2.5, 3.6), size: rnd(0.06, 0.12), h: 335, s: 95, l: 70, front: true }));
-  if (speaking) ptRate('talk', 4 + lv * 14, dt, () => ptSpawn(Math.random() < 0.45 ? 'text' : 'dot', { x: rnd(-0.7, 0.7), y: -0.4, vx: rnd(-0.3, 0.3), vy: -rnd(0.3, 0.7), life: rnd(1, 1.9), size: rnd(0.08, 0.15), h: hue + rnd(-40, 40), s: 95, l: 75, front: true, ch: ptPick(['♪', '♫', '♩']) }));
+  if (speaking) ptRate('talk', 3 + lv * 9, dt, () => { const sd = Math.random() < 0.5 ? -1 : 1;                  // 話すと、顔のよこから音符と小さなきらめき(顔にかぶらない位置)
+    if (Math.random() < 0.55) ptSpawn('text', { x: sd * rnd(0.95, 1.5), y: rnd(-1.1, -0.1), vx: sd * rnd(0.05, 0.25), vy: -rnd(0.3, 0.6), life: rnd(1.2, 2), size: rnd(0.12, 0.2), h: hue + rnd(-40, 40), s: 95, l: 75, front: true, ch: ptPick(['♪', '♫', '♩']) });
+    else ptSpawn('dot', { x: sd * rnd(0.9, 1.5), y: rnd(-1.1, 0), vx: sd * rnd(0.05, 0.3), vy: -rnd(0.2, 0.5), life: rnd(0.8, 1.4), size: rnd(0.015, 0.04), h: hue, s: 95, l: 85, front: true }); });
+  // 声に反応した波紋: 聞いているとき(あなたの声)と話しているとき(ルミの声)の音量で、足もとから光の輪が広がる。大きな声では星がはじける
+  if ((state === 'listening' || speaking) && lv > 0.1) {
+    ptRate('ring', 2.5 + lv * 7, dt, () => ptSpawn('ring', { x: 0, y: 1.38, size: 0.25, grow: 0.9 + lv * 0.9, life: 1.4, h: hue + rnd(-25, 25), s: 95, l: 76 }));
+    if (lv > 0.5) ptRate('loud', (lv - 0.45) * 50, dt, () => { const a = rnd(-0.4, 0.4); ptSpawn('star', { x: rnd(-0.9, 0.9), y: 1.3, vx: Math.sin(a) * 0.8, vy: -rnd(0.6, 1.4), g: 1.2, life: rnd(0.7, 1.3), size: rnd(0.05, 0.12), h: hue + rnd(-30, 30), s: 100, l: 85, rot: rnd(0, 6), front: true }); });
+  }
   if (m.anger >= 38) {
     ptRate('steam', Math.min(26, (m.anger - 35) * 0.4), dt, () => { const sd = Math.random() < 0.5 ? -1 : 1; ptSpawn('steam', { x: sd * 0.75, y: -0.85, vx: sd * rnd(0.1, 0.3), vy: -rnd(0.3, 0.6), life: rnd(1.1, 2), size: 0.06, grow: 0.1, h: rnd(0, 18), s: 95, l: 58, front: true }); });
     ptRate('mark', 0.3 + m.anger * 0.012, dt, () => { const sd = Math.random() < 0.5 ? -1 : 1; ptSpawn('text', { x: sd * rnd(0.85, 1.1), y: -rnd(0.9, 1.3), vy: -0.1, life: 1.1, size: rnd(0.2, 0.3), ch: '💢', front: true, rot: sd * 0.3 }); });
@@ -856,7 +863,7 @@ function ptStep(dt) {
     const p = PT[i]; p.age += dt;
     if (p.age >= p.life) { PT[i] = PT[PT.length - 1]; PT.pop(); continue; }
     if (p.orb) { p.ang += p.w * dt; p.rad += p.dr * dt; p.x = p.cx + Math.cos(p.ang) * p.rad; p.y = p.cy + Math.sin(p.ang) * p.rad * 0.7 - p.age * 0.12; }
-    else { p.vy += p.g * dt; p.x += p.vx * dt; p.y += p.vy * dt; }
+    else { p.vy += p.g * dt; p.x += p.vx * dt + (p.wob ? Math.sin(p.age * 2.4 + p.rot) * p.wob * dt : 0); p.y += p.vy * dt; }
     p.rot += p.vr * dt;
   }
 }
@@ -870,6 +877,13 @@ function ptDraw(front) {                              // キャラの空間(R単
     switch (p.kind) {
       case 'star': mcSparkle(p.x, p.y, sz * (0.65 + 0.35 * Math.sin(p.age * 9 + p.rot))); break;
       case 'dot': case 'steam': ctx.beginPath(); ctx.arc(p.x, p.y, sz, 0, 6.283); ctx.fill(); break;
+      case 'ring': ctx.strokeStyle = ctx.fillStyle; ctx.lineWidth = 0.022; ctx.beginPath(); ctx.ellipse(p.x, p.y, sz, sz * 0.28, 0, 0, 6.283); ctx.stroke(); break;
+      case 'bubble': {                                                      // 記憶の泡: 思い出した言葉が入って、ふわふわ浮かぶ
+        const r = sz; ctx.beginPath(); ctx.arc(p.x, p.y, r, 0, 6.283); ctx.fillStyle = `hsla(${p.h},80%,80%,0.18)`; ctx.fill();
+        ctx.strokeStyle = `hsla(${p.h},90%,86%,0.95)`; ctx.lineWidth = 0.014; ctx.stroke();
+        ctx.beginPath(); ctx.arc(p.x - r * 0.45, p.y - r * 0.45, r * 0.16, 0, 6.283); ctx.fillStyle = 'rgba(255,255,255,0.8)'; ctx.fill();
+        ctx.fillStyle = `hsl(${p.h},85%,94%)`; const fs = r * 1.55 / Math.max(2, p.maxlen); ctx.save(); ctx.translate(p.x, p.y); ctx.scale(fs / 60, fs / 60); ctx.font = 'bold 60px system-ui, sans-serif';
+        p.lines.forEach((ln, i) => ctx.fillText(ln, 0, (i - (p.lines.length - 1) / 2) * 72)); ctx.restore(); break; }
       case 'drop': ctx.beginPath(); ctx.ellipse(p.x, p.y, sz * 0.62, sz * 1.15, 0, 0, 6.283); ctx.fill(); break;
       case 'confetti': ctx.save(); ctx.translate(p.x, p.y); ctx.rotate(p.rot); ctx.scale(1, Math.abs(Math.cos(p.age * 5 + p.rot)) * 0.8 + 0.2); ctx.fillRect(-sz / 2, -sz / 4, sz, sz / 2); ctx.restore(); break;
       case 'heart': { ctx.save(); ctx.translate(p.x, p.y); const k = sz * 3.2; ctx.scale(k, k); ctx.beginPath(); ctx.moveTo(0, 0.3); ctx.bezierCurveTo(-0.55, -0.05, -0.3, -0.5, 0, -0.22); ctx.bezierCurveTo(0.3, -0.5, 0.55, -0.05, 0, 0.3); ctx.fill(); ctx.restore(); break; }
@@ -877,6 +891,27 @@ function ptDraw(front) {                              // キャラの空間(R単
     }
   }
   ctx.restore();
+}
+
+// 思い出した過去の会話: ひらめき電球がぽんと出て、そのときの言葉が泡になって頭のまわりに浮かぶ
+function memoryBubbles(words) {
+  ptSpawn('text', { x: 0.05, y: -2.0, vy: -0.12, life: 2, size: 0.4, grow: 0.12, ch: '💡', front: true });
+  for (let i = 0; i < 10; i++) ptSpawn('star', { x: rnd(-0.5, 0.5), y: rnd(-2.2, -1.7), vx: rnd(-0.5, 0.5), vy: rnd(-0.5, -0.1), life: rnd(0.6, 1.2), size: rnd(0.04, 0.09), h: 50, s: 100, l: 80, rot: rnd(0, 6), front: true });
+  words.slice(0, 3).forEach((w, i) => {
+    const t = String(w).replace(/[。、！？!?\s]+$/g, '').slice(0, 8); if (!t) return;
+    const n = t.length, half = n > 4 ? Math.ceil(n / 2) : n, lines = n > 4 ? [t.slice(0, half), t.slice(half)] : [t];
+    const sd = i % 2 ? 1 : -1;
+    ptSpawn('bubble', { x: sd * (0.9 + i * 0.15), y: -0.7 - i * 0.35, vx: sd * 0.05, vy: -rnd(0.16, 0.28), wob: 0.18, rot: rnd(0, 6), life: 5, size: 0.3, h: 190 + i * 25, front: true, lines, maxlen: Math.max(...lines.map(l => l.length)) });
+  });
+}
+// 話題に合う絵文字が、ぽんぽんと飛び出す(ことば→絵文字)
+const EMOJI_TOPICS = [[/カレー/, '🍛'], [/ラーメン|らーめん/, '🍜'], [/ケーキ|スイーツ|甘い|お菓子/, '🍰'], [/コーヒー|珈琲|カフェ/, '☕'], [/寿司|すし|お刺身/, '🍣'], [/ピザ/, '🍕'], [/ごはん|ご飯|お米|おにぎり/, '🍚'], [/お酒|ビール|乾杯/, '🍺'], [/りんご|リンゴ|フルーツ|果物/, '🍎'],
+  [/雨|傘/, '☔'], [/雪/, '⛄'], [/晴れ|太陽|いい天気/, '☀️'], [/星|流れ星|夜空/, '🌟'], [/月|お月/, '🌙'], [/虹/, '🌈'], [/桜|花見|お花|花/, '🌸'],
+  [/猫|ねこ|ネコ/, '🐱'], [/犬|いぬ|イヌ|わんこ/, '🐶'], [/鳥|とり/, '🐦'], [/音楽|歌|うた|ライブ|曲/, '🎵'], [/映画|シネマ/, '🎬'], [/本|読書|小説/, '📖'], [/ゲーム/, '🎮'],
+  [/仕事|会議|残業|会社/, '💼'], [/旅行|旅|空港|飛行機/, '✈️'], [/電車|駅/, '🚃'], [/車|ドライブ/, '🚗'], [/運動|サッカー|ジム|走/, '⚽'], [/恋|好き|デート|ハート/, '💕'], [/誕生日|おめでとう|お祝い|パーティ/, '🎉'], [/眠|ねむ|おやすみ|寝/, '💤'], [/ありがとう|感謝/, '🙏'], [/お金|給料|買い物/, '💰'], [/勉強|テスト|宿題/, '📚'], [/お風呂|温泉/, '♨️']];
+function emojiBurst(text) {
+  const found = []; for (const [re, em] of EMOJI_TOPICS) if (re.test(text) && !found.includes(em)) found.push(em);
+  found.slice(0, 2).forEach((em) => { for (let i = 0; i < 7; i++) ptSpawn('text', { x: rnd(-0.5, 0.5), y: rnd(0.2, 0.9), vx: rnd(-1.0, 1.0), vy: -rnd(0.9, 1.7), g: 1.6, life: rnd(1.8, 2.8), size: rnd(0.2, 0.34), ch: em, front: true, rot: rnd(-0.4, 0.4) }); });
 }
 
 function drawMascot3D(R, time) {
@@ -984,6 +1019,7 @@ function ensureAudio() {
 const chatHistory = [];     // {role:'user'|'ai', text}
 let emotion = 'neutral';
 let emotionTimer = null;
+let lastUserText = '';
 let me = null, mood = { joy: 50, anger: 0, sadness: 0, affinity: 50 };   // ログイン中のユーザーと、ルミの気分(サーバーが話しかけ方から更新する)
 const baseEmo = () => mood.anger >= 45 ? 'angry' : mood.sadness >= 50 ? 'sad' : mood.joy >= 80 ? 'happy' : 'neutral';   // 何も話していないときの顔つき
 
@@ -1130,7 +1166,7 @@ const pickAck = (a) => { const l = mood.anger >= 30 ? GRUMPY_ACKS : (ACK_BY[a &&
 async function handleUtterance(text) {
   if (state === 'thinking' || state === 'speaking') return;
   ensureAudio();
-  const myTurn = ++turn;
+  const myTurn = ++turn; lastUserText = text;
   setState('thinking'); level = 0; log('あなた: ' + text); setUserCap(text, false);
   const faAll = fastActions(text), hold = mood.anger >= 50 && faAll.length > 0;   // 不機嫌なときは、サーバーの判断(ことわるかも)を待ってから動く
   const fa = hold ? [] : faAll, ana = ASK_FEELING_RX.test(text);
@@ -1156,7 +1192,7 @@ async function handleUtterance(text) {
     chatHistory.push({ role: 'user', text }, { role: 'ai', text: out.reply });
     return speak(out.reply, out.emotion, out.actions);
   }
-  try { out = await getReply(text); } catch (e) { out = { reply: 'ごめんね、うまくつながらなかったみたい。', emotion: 'sad' }; }
+  try { out = await getReply(text); if (out.memories && out.memories.length) memoryBubbles(out.memories); } catch (e) { out = { reply: 'ごめんね、うまくつながらなかったみたい。', emotion: 'sad' }; }
   if (myTurn !== turn) return;                          // 返事を待つ間に割り込まれた
   chatHistory.push({ role: 'user', text }, { role: 'ai', text: out.reply });
   while (chatHistory.length > 16) chatHistory.shift();
@@ -1187,7 +1223,7 @@ function stopSpeaking() {
   if (replyCap) replyCap.endAt = performance.now();
 }
 async function speak(text, emo, actions) {
-  const my = turn;
+  const my = turn; try { emojiBurst(lastUserText + ' ' + text); } catch (_) {}
   emotion = EMO[emo] ? emo : 'neutral';
   replyCap = { text, started: false, at: 0, dur: 0, endAt: 0 };
   setState('speaking'); log('ルミ: ' + text);

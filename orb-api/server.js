@@ -421,6 +421,7 @@ http.createServer(async (req, res) => {
       if (turn.raw.anger >= 60 && ['neutral', 'happy'].includes(out.emotion)) out.emotion = 'angry';
       else if (turn.raw.sadness >= 60 && ['neutral', 'happy'].includes(out.emotion)) out.emotion = 'sad';
       out.mood = turn.mood; out.moodLabel = turn.moodLabel; out.stance = turn.stance;
+      out.memories = mems.map(m => m.user_text.replace(/\s+/g, ' ').slice(0, 16));   // 思い出した言葉(画面で泡にする)
       memory.remember(user.id, text.slice(0, 300), out.reply, out.emotion);   // 履歴に保存して、あとから思い出せるようにする
       analyzeFeelings(user, turn.raw).catch(() => {});                         // 履歴×気分から、この人への本音を分析(裏で)
       console.log(`[chat] ${user.username} ${via} ${Date.now() - t0}ms ask=${turn.askFeeling ? 1 : 0} mem=${mems.length} mood=${turn.mood.joy}/${turn.mood.anger}/${turn.mood.sadness}/♥${turn.mood.affinity} ${turn.stance} ${out.emotion} [${out.actions}]${turn.refused ? ' (ことわった)' : ''} ${out.reply}`);

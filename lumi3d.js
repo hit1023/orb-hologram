@@ -302,10 +302,12 @@ export function createLumi3D({ width = 560, height = 720 } = {}) {
       const k = ov ? 0.3 : 0.18;
       piv.rotation.x = lerp(piv.rotation.x, rx, k); piv.rotation.z = lerp(piv.rotation.z, rz, k);
       // 頭が大きいので、腕をあげるときは肩を外側・手前に出して、頭の陰に隠れないようにする
-      const rest = !ov && Math.abs(rz) < 0.45;                            // 腕を下ろしているときは、肩を胴体の高さまで下げて体に沿わせる
-      piv.position.y = lerp(piv.position.y, rest ? 1.27 : 1.5, 0.2);
-      piv.position.x = lerp(piv.position.x, s * (rest ? 0.5 : 0.46 + ((ov && ov[2]) || 0)), 0.2);
-      piv.position.z = lerp(piv.position.z, ov ? (ov[3] || 0) : (rest ? 0.2 : 0), 0.2);
+      // 肩の位置: 腕を高くあげる・顔に近づけるほど顔の高さ(1.5)、下げているほど胴体の高さ(1.27)。角度に応じて滑らかに切り替える
+      //   (しきい値で切り替えると、話しているときなど中くらいの角度で肩が顔の高さに残って、顔から手が生えて見える)
+      const up = Math.max(Math.min(1, Math.max(0, (Math.abs(rz) - 0.7) / 0.8)), Math.min(1, Math.max(0, (-rx - 0.6) / 0.8)));
+      piv.position.y = lerp(piv.position.y, lerp(1.27, 1.5, up), 0.2);
+      piv.position.x = lerp(piv.position.x, s * lerp(0.5, 0.46 + ((ov && ov[2]) || 0), up), 0.2);
+      piv.position.z = lerp(piv.position.z, lerp(0.2, (ov && ov[3]) || 0, up), 0.2);
     });
     const an = fx.analyze || 0;                                       // 分析: めがねがぽんっと出て、メモ帳にさらさら書く
     glasses.visible = notebook.visible = pen.visible = an > 0.02;

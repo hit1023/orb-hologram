@@ -93,6 +93,46 @@ async function runCloudflare(text, history, system = SYSTEM) {
   return out.trim();
 }
 
+// 返事とは別に、短い文章を1つ書かせる(気持ちの分析など)。失敗したら null
+async function cfText(system, user, maxTokens = 220) {
+  if (!CF_ACCOUNT || !CF_TOKEN) return null;
+  try {
+    const r = await fetch(`https://api.cloudflare.com/client/v4/accounts/${CF_ACCOUNT}/ai/run/${CF_MODEL}`, {
+      method: 'POST',
+      headers: { authorization: `Bearer ${CF_TOKEN}`, 'content-type': 'application/json', ...(CF_GATEWAY ? { 'cf-aig-gateway-id': CF_GATEWAY } : {}) },
+      body: JSON.stringify({ messages: [{ role: 'system', content: system }, { role: 'user', content: user }], max_tokens: maxTokens, temperature: 0.7 }),
+      signal: AbortSignal.timeout(15000),
+    });
+    if (!r.ok) return null;
+    const res = (await r.json()).result || {};
+    const out = res.response ?? res.choices?.[0]?.message?.content;
+    return typeof out === 'string' && out.trim() ? out.trim() : null;
+  } catch (_) { return null; }
+}
+
+// ---- 気持ちの分析: 会話の履歴 × いまの気分 から、ルミの「この人への本音」を言葉にする ----
+//   返事を待たせないよう、返したあとに裏で走らせる。数ターンごと、または態度が変わったとき。
+const feelingBusy = new Set();
+async function analyzeFeelings(user, m) {
+  if (feelingBusy.has(user.id)) return;
+  const row = store.loadMoodRow(user.id) || {};
+  const total = store.countTurns(user.id), st = moodLib.stance(m);
+  const changed = row.impr_stance && row.impr_stance !== st;
+  if (total < 3 || (total - (row.impr_turns || 0) < 4 && !changed) || Date.now() - (row.impr_at || 0) < 20000) return;
+  feelingBusy.add(user.id);
+  try {
+    const turns = store.recentTurns(user.id, 12);
+    const log = turns.map(t => `相手「${t.user_text.slice(0, 100)}」 ルミ「${t.reply.slice(0, 100)}」`).join('\n');
+    const r = moodLib.round(m);
+    const sys = 'あなたはキャラクター「ルミ」の心の声を書く。ルミの視点で、いま目の前の相手にどんな気持ちを持っているか、本音を1〜2文(合計80文字以内)で書く。' +
+      '会話の履歴と、ルミの気分の数値から読み取る。命令ばかりされた、ひどい言葉を言われた、冷たくされた、などがあれば、はっきり不満を書く。優しくされたなら、素直に好意を書く。' +
+      '本音なので、怒っているなら口悪く毒づいてよい(例: 「こいつ、命令ばっかで本当にうざい」)。ただし、人種・性別・外見・病気・家族への侮辱や、脅し、性的な言葉は書かない。出力は本音の文章だけ。説明やかぎかっこは付けない。';
+    const usr = `ルミの気分: よろこび${r.joy}/100、いかり${r.anger}/100、かなしみ${r.sadness}/100、この相手への好感度${r.affinity}/100(50が普通、低いほど嫌い)。\n前回の本音: ${row.impression || 'まだない'}\n\n最近のやりとり:\n${log}\n\nルミの本音:`;
+    const text = await cfText(sys, usr);
+    if (text) { store.saveImpression(user.id, text.replace(/^["「]|["」]$/g, '').slice(0, 200), total, st); console.log(`[feel] ${user.username} ${st} ${text.slice(0, 80)}`); }
+  } finally { feelingBusy.delete(user.id); }
+}
+
 function parseReply(raw) {
   const m = raw.match(/\{[\s\S]*\}/);
   if (m) {
@@ -182,8 +222,8 @@ function userTurn(user, text) {
     const before = moodLib.decayed(store.loadMoodRow(user.id));
     const after = moodLib.apply(before, an);
     store.saveMoodRow(user.id, after);
-    const refused = !an.spontaneous && an.actions.some(a => !ALWAYS_OK.includes(a)) && after.anger >= moodLib.REFUSE_ANGER;
-    return { ...an, source, refused, actions: refused ? ['sulk'] : an.actions, mood: moodLib.round(after), moodLabel: moodLib.label(after), raw: after };
+    const refused = !an.spontaneous && an.actions.some(a => !ALWAYS_OK.includes(a)) && moodLib.shouldRefuse(after);
+    return { ...an, source, refused, actions: refused ? ['sulk'] : an.actions, mood: { ...moodLib.round(after), stance: moodLib.stance(after) }, moodLabel: moodLib.label(after), stance: moodLib.stance(after), raw: after };
   })();
   turnCache.set(key, { at: Date.now(), promise });
   if (turnCache.size > 200) for (const [k, v] of turnCache) if (Date.now() - v.at > 20000) turnCache.delete(k);
@@ -252,7 +292,7 @@ function seedAdmin() {
 }
 seedAdmin();
 const userView = (u) => ({ id: u.id, username: u.username, role: u.role });
-const moodView = (id) => { const m = moodLib.decayed(store.loadMoodRow(id)); return { ...moodLib.round(m), label: moodLib.label(m) }; };
+const moodView = (id) => { const m = moodLib.decayed(store.loadMoodRow(id)); return { ...moodLib.round(m), label: moodLib.label(m), stance: moodLib.stance(m) }; };
 
 http.createServer(async (req, res) => {
   try {
@@ -338,7 +378,7 @@ http.createServer(async (req, res) => {
       // 話しかけ方の分析(気分の更新)と、過去の記憶の検索(埋め込み)を並べて待つ
       const [turn, qvec] = await Promise.all([userTurn(user, text.slice(0, 300)), memory.embedQuery(text.slice(0, 300))]);
       const mems = memory.recall(user.id, qvec);
-      const system = SYSTEM + `\n\n話し相手のユーザー名は「${user.username}」。` + moodLib.guide(turn.raw, turn.refused) + memory.block(mems);
+      const system = SYSTEM + `\n\n話し相手のユーザー名は「${user.username}」。` + moodLib.guide(turn.raw, turn.refused, (store.loadMoodRow(user.id) || {}).impression) + memory.block(mems);
       const stored = store.recentTurns(user.id, 8).flatMap(t => [{ role: 'user', text: t.user_text }, { role: 'ai', text: t.reply }]);
       const hist = stored.length ? stored : history;                  // 会話履歴はサーバーに保存したものを使う(ページを開き直しても続く)
       let raw, via = 'cf';
@@ -353,9 +393,10 @@ http.createServer(async (req, res) => {
       if (turn.refused) out.actions = ['sulk'];
       if (turn.raw.anger >= 60 && ['neutral', 'happy'].includes(out.emotion)) out.emotion = 'angry';
       else if (turn.raw.sadness >= 60 && ['neutral', 'happy'].includes(out.emotion)) out.emotion = 'sad';
-      out.mood = turn.mood; out.moodLabel = turn.moodLabel;
+      out.mood = turn.mood; out.moodLabel = turn.moodLabel; out.stance = turn.stance;
       memory.remember(user.id, text.slice(0, 300), out.reply, out.emotion);   // 履歴に保存して、あとから思い出せるようにする
-      console.log(`[chat] ${user.username} ${via} ${Date.now() - t0}ms mem=${mems.length} mood=${turn.mood.joy}/${turn.mood.anger}/${turn.mood.sadness} ${out.emotion} [${out.actions}]${turn.refused ? ' (ことわった)' : ''} ${out.reply}`);
+      analyzeFeelings(user, turn.raw).catch(() => {});                         // 履歴×気分から、この人への本音を分析(裏で)
+      console.log(`[chat] ${user.username} ${via} ${Date.now() - t0}ms mem=${mems.length} mood=${turn.mood.joy}/${turn.mood.anger}/${turn.mood.sadness}/♥${turn.mood.affinity} ${turn.stance} ${out.emotion} [${out.actions}]${turn.refused ? ' (ことわった)' : ''} ${out.reply}`);
       return send(res, 200, out);
     }
     if (req.method === 'POST' && url === '/api/act') {          // 動きと話しかけ方を速く判断する(Jev)。キーがなくても、気分の更新はする
@@ -364,7 +405,7 @@ http.createServer(async (req, res) => {
       const t0 = Date.now();
       const t = await userTurn(user, text.slice(0, 300));
       console.log(`[act] ${user.username} ${Date.now() - t0}ms [${t.actions}]${t.spontaneous ? ' (自然な反応)' : ''}${t.refused ? ' (ことわった)' : ''} ${t.manner}/${t.topic} mood=${t.mood.joy}/${t.mood.anger}/${t.mood.sadness}`);
-      return send(res, 200, { actions: t.actions, spontaneous: t.spontaneous, refused: t.refused, source: t.source, manner: t.manner, mood: t.mood, moodLabel: t.moodLabel });
+      return send(res, 200, { actions: t.actions, spontaneous: t.spontaneous, refused: t.refused, source: t.source, manner: t.manner, mood: t.mood, moodLabel: t.moodLabel, stance: t.stance });
     }
     if (req.method === 'POST' && url === '/api/tts') {
       const { text, emotion } = await readJson(req);

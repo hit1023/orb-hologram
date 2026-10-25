@@ -74,6 +74,7 @@
       <span class="mb">😊<i><b id="mbJ" style="background:#fc4"></b></i></span>
       <span class="mb">😠<i><b id="mbA" style="background:#f55"></b></i></span>
       <span class="mb">😢<i><b id="mbS" style="background:#5af"></b></i></span>
+      <span class="mb">💗<i><b id="mbF" style="background:#f8a"></b></i></span>
     </span>
     <button id="adminBtn" class="sm" style="display:none">管理</button>
     <button id="pwBtn" class="sm">パスワード変更</button>
@@ -901,7 +902,7 @@ function ensureAudio() {
 const chatHistory = [];     // {role:'user'|'ai', text}
 let emotion = 'neutral';
 let emotionTimer = null;
-let me = null, mood = { joy: 50, anger: 0, sadness: 0 };   // ログイン中のユーザーと、ルミの気分(サーバーが話しかけ方から更新する)
+let me = null, mood = { joy: 50, anger: 0, sadness: 0, affinity: 50 };   // ログイン中のユーザーと、ルミの気分(サーバーが話しかけ方から更新する)
 const baseEmo = () => mood.anger >= 45 ? 'angry' : mood.sadness >= 50 ? 'sad' : mood.joy >= 80 ? 'happy' : 'neutral';   // 何も話していないときの顔つき
 
 // --- マイク → 16kHz PCM → WebSocket(音声区間だけ送る) ---
@@ -1168,9 +1169,10 @@ window.fetch = async (...a) => {          // ログインが切れたら(401)、
 const jsend = (method, url, body) => _fetch(url, { method, headers: { 'content-type': 'application/json' }, body: body === undefined ? undefined : JSON.stringify(body) });
 function setMood(m) {
   if (!m || typeof m.anger !== 'number') return;
-  mood = { joy: m.joy, anger: m.anger, sadness: m.sadness };
-  $('mbJ').style.width = mood.joy + '%'; $('mbA').style.width = mood.anger + '%'; $('mbS').style.width = mood.sadness + '%';
-  $('moodbar').title = `ルミの気分  よろこび ${mood.joy} / いかり ${mood.anger} / かなしみ ${mood.sadness}`;
+  mood = { joy: m.joy, anger: m.anger, sadness: m.sadness, affinity: m.affinity ?? 50 };
+  $('mbJ').style.width = mood.joy + '%'; $('mbA').style.width = mood.anger + '%'; $('mbS').style.width = mood.sadness + '%'; $('mbF').style.width = mood.affinity + '%';
+  const ST = { hostile: '敵意', cold: '冷たい', tsundere: 'ツンツン', irritated: 'いらいら', sulky: 'しょんぼり', devoted: 'ラブラブ', normal: 'ふつう' };
+  $('moodbar').title = `ルミの気分  よろこび ${mood.joy} / いかり ${mood.anger} / かなしみ ${mood.sadness} / 好感度 ${mood.affinity}` + (m.stance ? `  (態度: ${ST[m.stance] || m.stance})` : '');
   if (state === 'idle') emotion = baseEmo();
 }
 function showLogin(msg) {
@@ -1241,7 +1243,7 @@ async function loadUsers() {
       if (!rr.ok) { $('adMsg').className = 'err'; $('adMsg').textContent = jj.error; } else loadUsers();
     });
     const sub = document.createElement('div'); sub.className = 'sub';
-    sub.textContent = `最終ログイン ${fmtDate(u.last_login)}  ／  気分 😊${u.mood.joy} 😠${u.mood.anger} 😢${u.mood.sadness}  ／  記憶 ${u.turns}件`;
+    sub.textContent = `最終ログイン ${fmtDate(u.last_login)}  ／  気分 😊${u.mood.joy} 😠${u.mood.anger} 😢${u.mood.sadness} 💗${u.mood.affinity}  ／  記憶 ${u.turns}件`;
     row.append(nm, acts, sub); box.appendChild(row);
   }
 }

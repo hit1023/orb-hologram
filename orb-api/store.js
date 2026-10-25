@@ -41,6 +41,9 @@ db.exec(`
   PRAGMA foreign_keys = ON;
 `);
 db.exec('PRAGMA foreign_keys = ON');
+for (const col of ["affinity REAL NOT NULL DEFAULT 50", "impression TEXT", "impr_turns INTEGER NOT NULL DEFAULT 0", "impr_stance TEXT", "impr_at INTEGER NOT NULL DEFAULT 0"]) {
+  try { db.exec(`ALTER TABLE moods ADD COLUMN ${col}`); } catch (_) { /* もうある */ }
+}
 
 const now = () => Date.now();
 const sha = (s) => crypto.createHash('sha256').update(s).digest('hex');
@@ -127,13 +130,16 @@ setInterval(() => { try { db.prepare('DELETE FROM sessions WHERE expires_at < ?'
 
 // ---- 気分 ----
 function loadMoodRow(userId) {
-  return db.prepare('SELECT joy, anger, sadness, streak, updated_at FROM moods WHERE user_id = ?').get(userId) || null;
+  return db.prepare('SELECT joy, anger, sadness, affinity, streak, updated_at, impression, impr_turns, impr_stance, impr_at FROM moods WHERE user_id = ?').get(userId) || null;
 }
 function saveMoodRow(userId, m) {
-  db.prepare(`INSERT INTO moods (user_id, joy, anger, sadness, streak, updated_at) VALUES (?, ?, ?, ?, ?, ?)
-    ON CONFLICT(user_id) DO UPDATE SET joy = excluded.joy, anger = excluded.anger, sadness = excluded.sadness, streak = excluded.streak, updated_at = excluded.updated_at`)
-    .run(userId, m.joy, m.anger, m.sadness, m.streak | 0, m.updated_at || now());
+  db.prepare(`INSERT INTO moods (user_id, joy, anger, sadness, affinity, streak, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)
+    ON CONFLICT(user_id) DO UPDATE SET joy = excluded.joy, anger = excluded.anger, sadness = excluded.sadness, affinity = excluded.affinity, streak = excluded.streak, updated_at = excluded.updated_at`)
+    .run(userId, m.joy, m.anger, m.sadness, m.affinity ?? 50, m.streak | 0, m.updated_at || now());
 }
+// ルミの「この人への本音」メモ(LLMが履歴と気分から書く)
+const saveImpression = (userId, text, turns, stance) =>
+  db.prepare('UPDATE moods SET impression = ?, impr_turns = ?, impr_stance = ?, impr_at = ? WHERE user_id = ?').run(text, turns, stance, now(), userId);
 const resetMood = (userId) => db.prepare('DELETE FROM moods WHERE user_id = ?').run(userId);
 
 // ---- 会話履歴(1回のやりとり=1行)。vec は意味検索用の埋め込みベクトル ----
@@ -151,4 +157,4 @@ const countTurns = (userId) => db.prepare('SELECT COUNT(*) AS n FROM turns WHERE
 const clearTurns = (userId) => db.prepare('DELETE FROM turns WHERE user_id = ?').run(userId).changes;
 
 module.exports = { addTurn, setTurnVec, recentTurns, turnsWithVec, countTurns, clearTurns, createUser, countUsers, countAdmins, listUsers, getUser, deleteUser, setPassword, checkLogin, verifyUserPassword,
-  createSession, sessionUser, deleteSession, loadMoodRow, saveMoodRow, resetMood, validateNewUser };
+  createSession, sessionUser, deleteSession, loadMoodRow, saveMoodRow, saveImpression, resetMood, validateNewUser };

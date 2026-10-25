@@ -1067,7 +1067,7 @@ function frame(now) {
   } else {
     // ピラミッド: 中心から離れた4方向に配置。スマホを横向きに置くと、長い辺が見る人の正面になる
     const d = side * (0.16 + size * 0.22);
-    const base = pyrRot >= 0 ? pyrRot : (W >= H ? 0 : 1);
+    const base = pyrRot >= 0 ? pyrRot : (W >= H ? 0 : 3);   // 縦長の画面を横に置くと、スマホの右の辺(電源ボタン側)が見る人の正面。右の辺=3
     for (let k = 0; k < 4; k++) {
       ctx.save();
       ctx.translate(W / 2, H * (0.2 + pos * 0.6));

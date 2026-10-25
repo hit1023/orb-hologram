@@ -294,7 +294,34 @@ function layoutCaption(text, base, maxW) {
 }
 
 let pyrActive = false;   // ピラミッド表示中は、4面それぞれに小さく・面の幅に収めて字幕を出す(全画面幅で描くと、4面が重なってめちゃくちゃになる)
+// ピラミッド用の字幕: 1行で大きく出して、長いときは横に流す(スクロール)。返事は、声に合わせて出た分だけ。止まったあと、くり返して流す
+const pyrScroll = { text: '', doneAt: 0 };
+function drawPyrCaption(R, cap) {
+  const base = Math.max(26, Math.min(R * 0.55 * pyrCap, 150)), maxW = Math.max(R * 4.2, 190);
+  const n = cap.kind === 'reply' ? Math.ceil(cap.text.length * cap.progress) : cap.text.length;
+  const txt = cap.text.replace(/\s+/g, ' ').slice(0, n);
+  const a = Math.min(1, cap.life / 1200) * (cap.partial ? 0.8 : 1);
+  ctx.save();
+  ctx.font = `bold ${base}px ${CAP_FONT}`; ctx.textAlign = 'left'; ctx.textBaseline = 'alphabetic';
+  const w = ctx.measureText(txt).width, now = performance.now();
+  const top = R * (pyrApexUp ? 1.35 : -1.35 - 1.1);
+  ctx.beginPath(); ctx.rect(-maxW / 2, top, maxW, base * 1.5); ctx.clip();
+  ctx.shadowColor = hsl(cur.h, 90, 70, a * 0.9); ctx.shadowBlur = base * 0.4;
+  ctx.fillStyle = cap.kind === 'notice' ? `rgba(255,190,110,${a})` : hsl(cur.h, 25, 96, a);
+  let x;
+  if (w <= maxW) x = -w / 2;
+  else if (cap.kind === 'reply' && cap.progress < 1) x = -maxW / 2 - (w - maxW);      // 出た分の最後が見えるように、流れながら出る
+  else {                                                                                // 全部出たら、止まって、くり返して流す
+    if (pyrScroll.text !== cap.text) { pyrScroll.text = cap.text; pyrScroll.doneAt = now; }
+    const t = Math.max(0, now - pyrScroll.doneAt - 1200) / 1000, gap = maxW * 0.5, off = (t * base * 2.2) % (w + gap);
+    x = -maxW / 2 - off;
+    if (off > w - maxW) ctx.fillText(txt, x + w + gap, 0 + top + base * 1.1);       // 切れ目なく、頭がつづく
+  }
+  ctx.fillText(txt, x, top + base * 1.1);
+  ctx.restore();
+}
 function drawCaption(R, cap) {
+  if (pyrActive) return drawPyrCaption(R, cap);
   let base = pyrActive ? Math.max(22, Math.min(R * 0.42 * pyrCap, 130)) : Math.max(18, Math.min(R * 0.30, W * 0.06));
   const maxW = pyrActive ? Math.max(R * 4.6 * Math.sqrt(pyrCap), 180) : W * 0.88;
   ctx.save();

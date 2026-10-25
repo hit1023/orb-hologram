@@ -463,6 +463,12 @@ http.createServer(async (req, res) => {
       res.writeHead(200, { 'content-type': 'text/event-stream; charset=utf-8', 'cache-control': 'no-cache, no-transform', connection: 'keep-alive', 'x-accel-buffering': 'no' });
       res.write('retry: 5000\n\n: connected\n\n'); bus.subscribe(u.id, res); return;
     }
+    if (req.method === 'GET' && url === '/api/jobs') {                      // 調べ物の状況(調べ中・完了・報告済み)
+      const u = currentUser(req); if (!u) return send(res, 401, { error: 'login required' });
+      const rows = store.listJobs(u.id, 10).map(j => ({ id: j.id, query: j.query, status: j.status, delivered: !!j.delivered, created_at: j.created_at, done_at: j.done_at,
+        summary: j.status === 'done' ? String(j.result || '').replace(/\s+/g, ' ').slice(0, 240) : '', sources: (() => { try { return JSON.parse(j.sources || '[]'); } catch (_) { return []; } })() }));
+      return send(res, 200, { jobs: rows, pending: rows.filter(j => j.status === 'pending' || j.status === 'running').length, ready: rows.filter(j => j.status === 'done' && !j.delivered).length, now: Date.now() });
+    }
     if (req.method === 'POST' && url === '/api/report') {                   // 調べ終わったことを、ルミの口調で報告する
       const st = store.getSettings(); if (!st.research_enabled) return send(res, 200, { none: true });
       const job = store.takeDoneJob(user.id); if (!job) return send(res, 200, { none: true, pending: store.countJobs(user.id) });

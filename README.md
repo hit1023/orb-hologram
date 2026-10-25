@@ -320,7 +320,7 @@ docker compose up -d
 | `docs/architecture.svg` / `.png` | アーキテクチャ図 |
 | `docs/lumi.png` | README の画像（ルミ） |
 | `HANDOFF.md` | 開発の引き継ぎメモ（設計・TODO・ハマりどころ） |
-| `hologram-deck.pptx` | 製作の紹介スライド（集大成版） |
+| `docs/hologram-deck.pptx` | 製作の紹介スライド（集大成版・19枚。Jev と Zenoh の深掘り入り） |
 | `ASSET-LICENSE.txt` | 素材の出典とライセンス |
 | `dancer-concept.png` ほか | ダンスキャラ・旧 3D・動画・スプライト素材 |
 

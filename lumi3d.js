@@ -180,6 +180,29 @@ export function createLumi3D({ width = 560, height = 720 } = {}) {
     arms.push({ piv, s });
   }
 
+  // めがね(分析のとき): 顔の前にかけて、ぽんっと出る。ホログラム板では黒が透明なので、明るい色にする
+  const glasses = new THREE.Group(); glasses.position.set(0, -0.02, 1.0); head.add(glasses); glasses.visible = false;
+  const gfMat = new THREE.MeshBasicMaterial({ color: 0xffd23f }), glMat = new THREE.MeshBasicMaterial({ color: 0xa8ecff, transparent: true, opacity: 0.2, depthWrite: false });
+  for (const sx of [-1, 1]) {
+    mesh(new THREE.TorusGeometry(0.31, 0.05, 10, 36), gfMat, glasses, sx * 0.4, 0, 0);
+    mesh(new THREE.CircleGeometry(0.3, 28), glMat, glasses, sx * 0.4, 0, 0);
+    const tp = mesh(new THREE.CylinderGeometry(0.035, 0.035, 0.7, 8), gfMat, glasses, sx * 0.74, 0, -0.33); tp.rotation.x = Math.PI / 2;   // つる(耳のほうへ)
+  }
+  mesh(new THREE.CylinderGeometry(0.035, 0.035, 0.2, 8), gfMat, glasses, 0, 0.05, 0).rotation.z = Math.PI / 2;
+  const glint = mesh(new THREE.PlaneGeometry(0.1, 0.5), new THREE.MeshBasicMaterial({ color: 0xffffff, transparent: true, opacity: 0.55, depthWrite: false }), glasses, -0.5, 0.05, 0.01);
+  glint.rotation.z = 0.6;
+
+  // メモ帳とペン(分析のとき): おなかの前で持って、さらさら書く
+  const notebook = new THREE.Group(); notebook.position.set(0, 0.82, 0.82); notebook.rotation.x = -0.45; root.add(notebook); notebook.visible = false;
+  mesh(new THREE.BoxGeometry(1.0, 1.25, 0.07), new THREE.MeshBasicMaterial({ color: 0xfff6d8 }), notebook);
+  mesh(new THREE.BoxGeometry(1.0, 0.16, 0.09), new THREE.MeshBasicMaterial({ color: 0x4fd2ff }), notebook, 0, 0.55, 0);   // 上の見出し帯
+  const lineMat = new THREE.MeshBasicMaterial({ color: 0x6f8aa8 });
+  for (let i = 0; i < 5; i++) mesh(new THREE.BoxGeometry(0.72 - (i % 2) * 0.18, 0.04, 0.09), lineMat, notebook, -0.05, 0.28 - i * 0.2, 0);
+  const pen = new THREE.Group(); root.add(pen); pen.visible = false;
+  mesh(new THREE.CylinderGeometry(0.035, 0.035, 0.6, 8), new THREE.MeshBasicMaterial({ color: 0xff5f8f }), pen, 0, 0.3, 0);
+  mesh(new THREE.ConeGeometry(0.035, 0.1, 8), new THREE.MeshBasicMaterial({ color: 0x333333 }), pen, 0, -0.04, 0).rotation.x = Math.PI;
+  const penTip = mesh(new THREE.SphereGeometry(0.05, 8, 6), new THREE.MeshBasicMaterial({ color: 0x9dffb0 }), pen, 0, -0.1, 0);
+
   // ハート(投げキス・ハートを出す): ルミの前にふわっと浮かんで消える
   const heartShape = new THREE.Shape();
   heartShape.moveTo(0, -0.3); heartShape.bezierCurveTo(-0.55, 0.05, -0.3, 0.5, 0, 0.22); heartShape.bezierCurveTo(0.3, 0.5, 0.55, 0.05, 0, -0.3);
@@ -284,6 +307,15 @@ export function createLumi3D({ width = 560, height = 720 } = {}) {
       piv.position.x = lerp(piv.position.x, s * (rest ? 0.5 : 0.46 + ((ov && ov[2]) || 0)), 0.2);
       piv.position.z = lerp(piv.position.z, ov ? (ov[3] || 0) : (rest ? 0.2 : 0), 0.2);
     });
+    const an = fx.analyze || 0;                                       // 分析: めがねがぽんっと出て、メモ帳にさらさら書く
+    glasses.visible = notebook.visible = pen.visible = an > 0.02;
+    if (an > 0.02) {
+      glasses.scale.setScalar(Math.min(1, an * 1.15) * (1 + Math.max(0, 1 - an) * 0.2)); glasses.position.y = -0.02 + (1 - an) * 0.5;
+      notebook.scale.setScalar(an); notebook.position.y = 0.82 - (1 - an) * 0.3;
+      const wr = t * 14;                                                // 書く手の動き(小刻みに左右へ)
+      pen.position.set(0.12 + Math.sin(wr) * 0.14, 0.72 + Math.cos(wr * 0.5) * 0.06 - (1 - an) * 0.3, 1.0); pen.rotation.set(-0.5, 0, -0.5);
+      pen.scale.setScalar(an); penTip.scale.setScalar(0.7 + Math.abs(Math.sin(wr)) * 0.8);
+    }
     const sig = [p.wink || '', p.eye, p.mouth, Math.round(p.open * 12), p.blink > 0.55 ? 1 : 0, Math.round(p.blush * 10), Math.round(p.brow * 8), Math.round(p.raise * 20), p.listening ? 1 : 0, p.tear ? Math.round(p.tear * 20) : 0, p.mouth === 'wavy' ? Math.round(t * 10) : 0].join('|');
     if (sig !== lastSig) { paintFace(fg, p); faceTex.needsUpdate = true; lastSig = sig; }
     renderer.render(scene, camera);

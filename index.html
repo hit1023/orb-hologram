@@ -696,7 +696,11 @@ function drawMascot(R, time) {
 const ACT_DUR = { raise_right: 4, raise_left: 4, raise_both: 4, wave: 3, clap: 3, spin: 1.8, jump: 1.6, close_eyes: 4, open_eyes: 0.4,
   cry: 4.5, laugh: 3.5, angry: 3.5, shy: 3.5, bow: 1.8, nod: 1.8, shake_head: 1.8, dance: 5, sleep: 6.5,
   wink_left: 1.6, wink_right: 1.6, peace: 3, kiss: 2.6, heart: 3.5, shiver: 3.5, sit: 4, stretch: 3.5, yawn: 3.5, point: 2.5, shrug: 2.5, sulk: 3.5,
-  surprise: 2, think: 3.5, sway: 5, march: 4, banzai: 2.5, faint: 3.6, tilt_head: 2.5, look_around: 3.5, flap: 3.5, sparkle: 3, guts: 3, cheer: 3.5, hop: 3.5, lower: 0.1, scared: 6 };
+  surprise: 2, think: 3.5, sway: 5, march: 4, banzai: 2.5, faint: 3.6, tilt_head: 2.5, look_around: 3.5, flap: 3.5, sparkle: 3, guts: 3, cheer: 3.5, hop: 3.5, lower: 0.1, scared: 6, analyze: 4.5 };
+// 動きごとに出るパーティクル(1秒あたりの数)
+const PT_EMIT = { banzai: { confetti: 30 }, cheer: { confetti: 32, star: 14 }, guts: { star: 26, confetti: 10 }, dance: { note: 12, star: 16 }, spin: { star: 44 }, laugh: { star: 22, note: 4 },
+  cry: { drop: 24 }, shy: { heart: 6 }, sparkle: { star: 46 }, kiss: { heart: 9 }, heart: { heart: 12 }, jump: { star: 34 }, hop: { star: 16 }, sleep: { zzz: 2.2 }, angry: { steam: 22 }, sulk: { steam: 8 },
+  scared: { drop: 10 }, shiver: { drop: 8 }, faint: { star: 16 }, wave: { star: 10 }, clap: { star: 20 }, peace: { star: 18 }, analyze: { sym: 20, dot: 18 } };
 let actQueue = [], actCur = null, curFx = null, actFrame = -1;
 function playActions(list) {
   list = Array.isArray(list) ? list : [];
@@ -707,6 +711,8 @@ const easeIO = x => x < 0.5 ? 2 * x * x : 1 - Math.pow(-2 * x + 2, 2) / 2;
 function actPose(n, u, d) {
   const f = {}, s = Math.sin, PI = Math.PI, env = Math.max(0, Math.min(1, u / 0.3, (d - u) / 0.35));
   switch (n) {
+    case 'analyze': { const r = u < 0.45 ? easeIO(u / 0.45) : u > d - 0.45 ? easeIO(Math.max(0, (d - u) / 0.45)) : 1; f.analyze = r; f.pitch = 0.2 * r + s(u * 1.3) * 0.04; f.emo = 'neutral';
+      f.arms = { L: [-1.3, 0.55], R: [-1.15 + s(u * 14) * 0.1, -0.5] }; break; }       // めがね+メモ帳: 科学者みたいに、うつむいてさらさら書く
     case 'raise_right': f.arms = { L: [0, -2.75, 0.7, 0.3] }; break;                      // ルミの右手(向かい合うので画面の左側)
     case 'raise_left': f.arms = { R: [0, 2.75, 0.7, 0.3] }; break;                        // ルミの左手(画面の右側)
     case 'raise_both': f.arms = { L: [0, -2.75, 0.7, 0.3], R: [0, 2.75, 0.7, 0.3] }; f.emo = 'happy'; break;
@@ -753,6 +759,7 @@ function actPose(n, u, d) {
     case 'sparkle': f.emo = 'happy'; f.sparkle = true; f.arms = { R: [0, 0.9] }; break;
     case 'sleep': { const r = u < 1.1 ? easeIO(u / 1.1) : u > d - 0.9 ? easeIO(Math.max(0, (d - u) / 0.9)) : 1; f.roll = 1.5 * r + s(u * 1.6) * 0.03 * r; f.bed = r; f.closeEyes = true; f.arms = { L: [0, -0.3], R: [0, 0.3] }; f.sparkle = r > 0.9 && (u % 1.6) < 0.4; break; }   // 横になって寝る(ゆっくり倒れて、起き上がる)
   }
+  if (PT_EMIT[n]) f.emit = PT_EMIT[n];
   return f;
 }
 // 頼まれなくても、ときどき自分から動く(きょろきょろ・あくび・ゆらゆら…と、まれにばたっと倒れる)
@@ -786,9 +793,11 @@ const FAST_ACTIONS = [
   [/(怒って|おこって)/, 'angry'], [/(おじぎ|お辞儀)/, 'bow'], [/(おどって|踊って|ダンス)/, 'dance'], [/(寝て|ねて|おやすみ|横になって|ごろん|寝転)/, 'sleep'],
   [/ウインク|ウィンク/, 'wink_right'], [/ピース/, 'peace'], [/(投げキス|キスして)/, 'kiss'], [/ハート/, 'heart'], [/(ぶるぶる|震えて)/, 'shiver'],
   [/(しゃがん|座って|すわって|かがん)/, 'sit'], [/(のび|伸び)/, 'stretch'], [/あくび/, 'yawn'], [/(指さし|ゆびさし)/, 'point'],
-  [/(すねて|むくれて)/, 'sulk'], [/(きょろきょろ)/, 'look_around'], [/(足ぶみ|足踏み)/, 'march'], [/(かしげて|傾げて)/, 'tilt_head'], [/(きらきら|キラキラ)/, 'sparkle'],
+  [/(すねて|むくれて)/, 'sulk'], [/(きょろきょろ)/, 'look_around'], [/(足ぶみ|足踏み)/, 'march'], [/(かしげて|傾げて)/, 'tilt_head'], [/(きらきら|キラキラ)/, 'sparkle'], [/(分析|ぶんせき|研究者|科学者|博士|はかせ|めがね|メガネ|眼鏡)/, 'analyze'],
   [/(怖がって|こわがって|おばけ|お化け|幽霊|ゆうれい|ホラー|怖い|こわい)/, 'scared'], [/ガッツポーズ|ファイト/, 'guts'], [/(応援|フレーフレー|がんばれ)/, 'cheer'], [/(ぴょんぴょん|ぴょこぴょこ)/, 'hop'],
 ];
+// 「俺のイメージは?」「いまどんな気持ち?」: ルミ自身の気持ちを聞かれたとき(サーバーの判定と同じ)。めがねをかけて分析する
+const ASK_FEELING_RX = /((俺|おれ|私|わたし|あたし|僕|ぼく|うち|自分)(の|って|は|のこと).{0,8}(イメージ|印象|評価|どう思|どんな(人|やつ|奴|ひと)|好き|嫌い|きらい)|(イメージ|印象|評価)(は|って|を?教えて|どう|を聞かせて)|(今|いま).{0,6}(どんな)?(気持ち|気分|機嫌)|(ルミ|きみ|君|あなた|お前|おまえ).{0,6}(どう思って|どんな気持ち|何を思って|私.{0,4}好き|俺.{0,4}好き)|(俺|私|僕|ぼく|わたし)のこと.{0,6}(好き|嫌い|どう))/;
 let fastPlayed = '', actDecided = false;
 function fastActions(text) {
   if (/(ないで|なくて|やめて|しないで|するな|じゃなくて)/.test(text)) return [];            // 否定・取り消しはAIに任せる
@@ -800,6 +809,65 @@ function fastActions(text) {
 
 /* ===== ルミ3D: lumi3d.js(three.js)で組み立てた立体のルミ。ゆっくり回り、話す・聞くときは正面を向く ===== */
 let spin3 = 0, lastT3 = 0, forceSpin = null;   // forceSpin: 確認用(?spin=角度)
+/* ===== パーティクル: 気分と動きで出し分ける(ホログラム板では黒が透明なので、明るい色で) =====
+   よろこび=紙ふぶき・きらきら / いかり=赤い湯気と💢 / かなしみ=青いしずく / 好感度が高い=ハート / 話すと音符 / 動きごとの噴き出し */
+const PT = [], PT_MAX = 560, ptAcc = {}; let ptLast = 0;
+const PT_SYMS = ['∑', 'π', '√', '∫', '%', '=', '+', '×', '0', '1', '?', '!', '≈', '∞', 'Δ', 'θ', '2', '7'];
+const rnd = (a, b) => a + Math.random() * (b - a);
+function ptSpawn(kind, o) { if (PT.length < PT_MAX) PT.push(Object.assign({ kind, x: 0, y: 0, vx: 0, vy: 0, g: 0, age: 0, life: 2, size: 0.06, grow: 0, rot: 0, vr: 0, h: 50, s: 90, l: 80, front: false, ch: '' }, o)); }
+function ptRate(key, rate, dt, fn) { const a = (ptAcc[key] || 0) + rate * dt; let n = Math.floor(a); ptAcc[key] = a - n; while (n-- > 0) fn(); }
+const ptPick = (arr) => arr[Math.floor(Math.random() * arr.length)];
+function ptEmitAll(dt, hue, fx, lv, speaking) {
+  const m = mood;
+  ptRate('amb', 18 + m.joy * 0.16, dt, () => { const a = rnd(0, 6.283), r = rnd(1.1, 2.5); ptSpawn('star', { x: Math.cos(a) * r, y: Math.sin(a) * r * 0.95 - 0.1, vx: rnd(-0.05, 0.05), vy: -rnd(0.04, 0.22), life: rnd(2.2, 4.2), size: rnd(0.03, 0.1), h: hue + rnd(-35, 35), s: 90, l: 86, rot: rnd(0, 6) }); });
+  ptRate('dust', 14, dt, () => ptSpawn('dot', { x: rnd(-2.3, 2.3), y: rnd(-1.9, 1.9), vy: -rnd(0.04, 0.2), life: rnd(2, 4.5), size: rnd(0.012, 0.032), h: hue, s: 60, l: 92 }));
+  if (m.joy >= 62) ptRate('conf', (m.joy - 60) * 0.55, dt, () => ptSpawn('confetti', { x: rnd(-2, 2), y: -2.3, vx: rnd(-0.15, 0.15), vy: rnd(0.25, 0.6), life: rnd(3, 5), size: rnd(0.05, 0.1), h: rnd(0, 360), s: 95, l: 65, rot: rnd(0, 6), vr: rnd(-6, 6) }));
+  if ((m.affinity ?? 50) >= 68 && m.anger < 40) ptRate('luv', (m.affinity - 65) * 0.25, dt, () => ptSpawn('heart', { x: rnd(-1.4, 1.4), y: rnd(0.2, 1.3), vx: rnd(-0.1, 0.1), vy: -rnd(0.25, 0.5), life: rnd(2.5, 3.6), size: rnd(0.06, 0.12), h: 335, s: 95, l: 70, front: true }));
+  if (speaking) ptRate('talk', 4 + lv * 14, dt, () => ptSpawn(Math.random() < 0.45 ? 'text' : 'dot', { x: rnd(-0.7, 0.7), y: -0.4, vx: rnd(-0.3, 0.3), vy: -rnd(0.3, 0.7), life: rnd(1, 1.9), size: rnd(0.08, 0.15), h: hue + rnd(-40, 40), s: 95, l: 75, front: true, ch: ptPick(['♪', '♫', '♩']) }));
+  if (m.anger >= 38) {
+    ptRate('steam', Math.min(26, (m.anger - 35) * 0.4), dt, () => { const sd = Math.random() < 0.5 ? -1 : 1; ptSpawn('steam', { x: sd * 0.75, y: -0.85, vx: sd * rnd(0.1, 0.3), vy: -rnd(0.3, 0.6), life: rnd(1.1, 2), size: 0.06, grow: 0.1, h: rnd(0, 18), s: 95, l: 58, front: true }); });
+    ptRate('mark', 0.3 + m.anger * 0.012, dt, () => { const sd = Math.random() < 0.5 ? -1 : 1; ptSpawn('text', { x: sd * rnd(0.85, 1.1), y: -rnd(0.9, 1.3), vy: -0.1, life: 1.1, size: rnd(0.2, 0.3), ch: '💢', front: true, rot: sd * 0.3 }); });
+  }
+  if (m.sadness >= 32) ptRate('rain', Math.min(22, (m.sadness - 28) * 0.35), dt, () => ptSpawn('drop', { x: rnd(-1.7, 1.7), y: -2.2, vy: rnd(0.9, 1.4), g: 0.8, life: 2.2, size: 0.045, h: 205, s: 95, l: 72, front: true }));
+  const e = fx && fx.emit; if (!e) return;
+  if (e.star) ptRate('e_star', e.star, dt, () => { const a = rnd(0, 6.283), r = rnd(0.7, 1.9); ptSpawn('star', { x: Math.cos(a) * r, y: Math.sin(a) * r - 0.1, vx: Math.cos(a) * 0.3, vy: Math.sin(a) * 0.3 - 0.2, life: rnd(0.8, 1.6), size: rnd(0.05, 0.13), h: rnd(40, 70), s: 100, l: 80, rot: rnd(0, 6), front: true }); });
+  if (e.confetti) ptRate('e_conf', e.confetti, dt, () => ptSpawn('confetti', { x: rnd(-1.8, 1.8), y: -2.2, vx: rnd(-0.3, 0.3), vy: rnd(0.4, 1.0), life: rnd(2, 3.4), size: rnd(0.06, 0.12), h: rnd(0, 360), s: 95, l: 65, rot: rnd(0, 6), vr: rnd(-8, 8), front: true }));
+  if (e.note) ptRate('e_note', e.note, dt, () => ptSpawn('text', { x: rnd(-1.3, 1.3), y: rnd(-1.2, 0.2), vx: rnd(-0.2, 0.2), vy: -rnd(0.3, 0.6), life: rnd(1.2, 2), size: rnd(0.12, 0.2), h: rnd(0, 360), s: 95, l: 72, ch: ptPick(['♪', '♫', '♩']), front: true }));
+  if (e.drop) ptRate('e_drop', e.drop, dt, () => { const sd = Math.random() < 0.5 ? -1 : 1; ptSpawn('drop', { x: sd * rnd(0.3, 0.55), y: -0.2, vx: sd * rnd(0.05, 0.4), vy: rnd(-0.2, 0.2), g: 1.6, life: 1.3, size: rnd(0.03, 0.06), h: 200, s: 95, l: 75, front: true }); });
+  if (e.heart) ptRate('e_heart', e.heart, dt, () => ptSpawn('heart', { x: rnd(-1.2, 1.2), y: rnd(0, 1.2), vx: rnd(-0.15, 0.15), vy: -rnd(0.35, 0.7), life: rnd(1.6, 2.6), size: rnd(0.07, 0.15), h: 335, s: 95, l: 70, front: true }));
+  if (e.zzz) ptRate('e_zzz', e.zzz, dt, () => ptSpawn('text', { x: 0.8, y: -0.7, vx: 0.18, vy: -0.28, life: 2.6, size: 0.15, grow: 0.06, h: 215, s: 90, l: 82, ch: ptPick(['Z', 'z', 'Z']), front: true }));
+  if (e.steam) ptRate('e_steam', e.steam, dt, () => { const sd = Math.random() < 0.5 ? -1 : 1; ptSpawn('steam', { x: sd * 0.75, y: -0.85, vx: sd * rnd(0.1, 0.3), vy: -rnd(0.3, 0.6), life: rnd(1, 1.8), size: 0.07, grow: 0.12, h: rnd(0, 18), s: 95, l: 58, front: true }); });
+  if (e.sym) ptRate('e_sym', e.sym, dt, () => ptSpawn('text', { orb: 1, ang: rnd(0, 6.283), rad: rnd(0.95, 1.5), dr: rnd(0.04, 0.12), w: rnd(0.7, 1.4) * (Math.random() < 0.5 ? -1 : 1), cx: 0, cy: -0.3, life: rnd(2, 3.2), size: rnd(0.12, 0.2), h: rnd(95, 175), s: 95, l: 70, ch: ptPick(PT_SYMS), front: true }));
+  if (e.dot) ptRate('e_dot', e.dot, dt, () => ptSpawn('dot', { x: rnd(-0.2, 0.3), y: rnd(0.35, 0.65), vx: rnd(-0.3, 0.3), vy: -rnd(0.2, 0.6), life: rnd(0.5, 1), size: rnd(0.02, 0.045), h: rnd(120, 180), s: 100, l: 75, front: true }));
+}
+function ptStep(dt) {
+  for (let i = PT.length - 1; i >= 0; i--) {
+    const p = PT[i]; p.age += dt;
+    if (p.age >= p.life) { PT[i] = PT[PT.length - 1]; PT.pop(); continue; }
+    if (p.orb) { p.ang += p.w * dt; p.rad += p.dr * dt; p.x = p.cx + Math.cos(p.ang) * p.rad; p.y = p.cy + Math.sin(p.ang) * p.rad * 0.7 - p.age * 0.12; }
+    else { p.vy += p.g * dt; p.x += p.vx * dt; p.y += p.vy * dt; }
+    p.rot += p.vr * dt;
+  }
+}
+function ptDraw(front) {                              // キャラの空間(R単位)で描く。front=false はキャラの後ろ、true は前
+  ctx.save(); ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+  for (const p of PT) {
+    if (p.front !== front) continue;
+    const u = p.age / p.life, sz = p.size + p.grow * p.age;
+    ctx.globalAlpha = Math.max(0, Math.min(1, u * 7, (1 - u) * 2.2)) * (p.kind === 'steam' ? 0.55 : 1);
+    ctx.fillStyle = `hsl(${p.h | 0},${p.s}%,${p.l}%)`;
+    switch (p.kind) {
+      case 'star': mcSparkle(p.x, p.y, sz * (0.65 + 0.35 * Math.sin(p.age * 9 + p.rot))); break;
+      case 'dot': case 'steam': ctx.beginPath(); ctx.arc(p.x, p.y, sz, 0, 6.283); ctx.fill(); break;
+      case 'drop': ctx.beginPath(); ctx.ellipse(p.x, p.y, sz * 0.62, sz * 1.15, 0, 0, 6.283); ctx.fill(); break;
+      case 'confetti': ctx.save(); ctx.translate(p.x, p.y); ctx.rotate(p.rot); ctx.scale(1, Math.abs(Math.cos(p.age * 5 + p.rot)) * 0.8 + 0.2); ctx.fillRect(-sz / 2, -sz / 4, sz, sz / 2); ctx.restore(); break;
+      case 'heart': { ctx.save(); ctx.translate(p.x, p.y); const k = sz * 3.2; ctx.scale(k, k); ctx.beginPath(); ctx.moveTo(0, 0.3); ctx.bezierCurveTo(-0.55, -0.05, -0.3, -0.5, 0, -0.22); ctx.bezierCurveTo(0.3, -0.5, 0.55, -0.05, 0, 0.3); ctx.fill(); ctx.restore(); break; }
+      case 'text': ctx.save(); ctx.translate(p.x, p.y); ctx.rotate(p.rot); ctx.scale(sz / 60, sz / 60); ctx.font = 'bold 60px system-ui, sans-serif'; ctx.fillText(p.ch, 0, 0); ctx.restore(); break;
+    }
+  }
+  ctx.restore();
+}
+
 function drawMascot3D(R, time) {
   const L = window.Lumi3D;
   if (!L) { drawMascot(R, time); return; }          // 読み込み前・WebGLが使えないときは平らなルミ
@@ -847,10 +915,13 @@ function drawMascot3D(R, time) {
     }
     ctx.restore();
   }
+  { const dt = Math.max(0, Math.min(0.05, time - ptLast)); ptLast = time; ptEmitAll(dt, mc.hue, fx, lv, speaking); ptStep(dt);
+    ctx.save(); ctx.scale(R, R); ptDraw(false); ctx.restore(); }          // キャラの後ろ(きらきら・ほこり・紙ふぶき)
   const h = R * 4.5, w = h * L.width / L.height;
   ctx.shadowColor = hsl(mc.hue, 100, 72, 0.8); ctx.shadowBlur = R * DPR * 0.12;
   ctx.drawImage(cvs, -w / 2, -R * 0.12 - h / 2, w, h);
   ctx.shadowBlur = 0;
+  ctx.save(); ctx.scale(R, R); ptDraw(true); ctx.restore();                // キャラの前(湯気・しずく・ハート・音符・数式)
   if (key === 'thinking') {
     ctx.fillStyle = '#fff';
     for (let i = 0; i < 3; i++) { ctx.globalAlpha = 0.4 + 0.6 * Math.max(0, Math.sin(time * 4 - i)); ctx.beginPath(); ctx.arc(R * (1.15 + i * 0.2), -R * (1.3 + i * 0.07), R * 0.065, 0, Math.PI * 2); ctx.fill(); }
@@ -1050,17 +1121,26 @@ async function handleUtterance(text) {
   ensureAudio();
   const myTurn = ++turn;
   setState('thinking'); level = 0; log('あなた: ' + text); setUserCap(text, false);
-  const fa = mood.anger >= 50 ? [] : fastActions(text); fastPlayed = fa.join(','); actDecided = false; if (fa.length) playActions(fa);   // すぐ動き始める
+  const faAll = fastActions(text), hold = mood.anger >= 50 && faAll.length > 0;   // 不機嫌なときは、サーバーの判断(ことわるかも)を待ってから動く
+  const fa = hold ? [] : faAll, ana = ASK_FEELING_RX.test(text);
+  fastPlayed = fa.join(','); actDecided = false;
+  if (fa.length) playActions(fa);                                                   // すぐ動き始める
+  else if (ana) { playActions(['analyze']); fastPlayed = 'analyze'; }              // 気持ちを聞かれたら、めがねで分析
   fetch(CONFIG.actEndpoint, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ text }) })   // 動きの判断(Jev)を、返答の生成と並べて呼ぶ
     .then(r => r.ok ? r.json() : null).catch(() => null).then(j => {
       if (j) setMood(j.mood);
-      if (!j || j.source !== 'jev' || myTurn !== turn) return;                       // Jevが使えないときは、返答APIの動きを使う
+      if (myTurn !== turn) return;
+      if (!j || j.source !== 'jev') { if (hold && !fa.length) { playActions(faAll); fastPlayed = faAll.join(','); } return; }   // Jevが使えないときは、返答APIの動きを使う
       actDecided = true;
-      if (!fa.length && j.actions.length) { playActions(j.actions); fastPlayed = j.actions.join(','); }
+      if (!fa.length) {
+        const acts = (j.refused || j.actions.length) ? j.actions : (hold ? faAll : []);
+        if (acts.length) { playActions(acts); fastPlayed = acts.join(','); }
+        else if (j.askFeeling && fastPlayed !== 'analyze') { playActions(['analyze']); fastPlayed = 'analyze'; }
+      }
     });
   clearTimeout(emotionTimer); emotion = baseEmo();
   let out;
-  if (fa.length && text.length <= 16 && CONFIG.chatEndpoint) {      // 短くはっきりした動きの依頼は、定型の一言ですぐ返す(声も先読みしてあるので遅れない)
+  if (fa.length && !ana && text.length <= 16 && CONFIG.chatEndpoint) {      // 短くはっきりした動きの依頼は、定型の一言ですぐ返す(声も先読みしてあるので遅れない)
     out = { reply: pickAck(fa), emotion: mood.anger >= 30 ? 'angry' : ['scared', 'cry', 'faint'].includes(fa[0]) ? 'sad' : 'happy', actions: fa };
     chatHistory.push({ role: 'user', text }, { role: 'ai', text: out.reply });
     return speak(out.reply, out.emotion, out.actions);

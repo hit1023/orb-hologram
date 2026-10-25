@@ -379,7 +379,11 @@ http.createServer(async (req, res) => {
           if (id === me.id) return send(res, 400, { error: '自分自身は削除できません' });
           store.deleteUser(id); memory.forget(id); console.log(`[admin] ${me.username} がユーザー #${id} を削除`); return send(res, 200, { ok: true });
         }
-        if (req.method === 'POST' && m[2] === 'password') { const { password } = await readJson(req); store.setPassword(id, password); return send(res, 200, { ok: true }); }
+        if (req.method === 'POST' && m[2] === 'password') {
+          const { password } = await readJson(req); store.setPassword(id, password);
+          if (id === me.id) { const ns = store.createSession(me.id); setCookie(res, req, ns.token, ns.maxAge); }   // 自分のパスワードを変えても、この端末はログインを続ける
+          return send(res, 200, { ok: true });
+        }
         if (req.method === 'POST' && m[2] === 'mood-reset') { store.resetMood(id); return send(res, 200, { ok: true }); }
         if (req.method === 'POST' && m[2] === 'memory-clear') return send(res, 200, { ok: true, deleted: memory.forget(id) });
       }

@@ -200,7 +200,7 @@ const finishJob = (id, status, result, sources) => db.prepare('UPDATE jobs SET s
 const takeDoneJob = (userId) => db.prepare("SELECT * FROM jobs WHERE user_id = ? AND status = 'done' AND delivered = 0 ORDER BY id LIMIT 1").get(userId) || null;
 const markJobDelivered = (id) => db.prepare('UPDATE jobs SET delivered = 1 WHERE id = ?').run(id);
 const failStaleJobs = () => db.prepare("UPDATE jobs SET status = 'failed', done_at = ? WHERE status IN ('pending','running') AND created_at < ?").run(now(), now() - 20 * 60000).changes;
-const listJobs = (userId, n = 10) => db.prepare('SELECT id, query, status, delivered, result, sources, created_at, done_at FROM jobs WHERE user_id = ? AND status != "skipped" ORDER BY id DESC LIMIT ?').all(userId, n);
+const listJobs = (userId, n = 10) => db.prepare(`SELECT id, query, status, delivered, result, sources, created_at, done_at FROM jobs WHERE user_id = ? AND status != 'skipped' ORDER BY id DESC LIMIT ?`).all(userId, n);
 const clearJobs = (userId) => db.prepare("DELETE FROM jobs WHERE user_id = ? AND status NOT IN ('pending','running') AND NOT (status = 'done' AND delivered = 0)").run(userId).changes;
 const countJobs = (userId) => db.prepare("SELECT COUNT(*) AS n FROM jobs WHERE user_id = ? AND status IN ('pending','running')").get(userId).n;
 

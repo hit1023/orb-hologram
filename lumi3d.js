@@ -275,7 +275,7 @@ export function createLumi3D({ width = 560, height = 720 } = {}) {
     tails.forEach((piv, i) => { const s = i ? 1 : -1; piv.rotation.z = s * (0.12 + (Math.sin(t * 1.6 + i * 1.5) * 0.1) + p.talk * 0.05); piv.rotation.x = Math.sin(t * 1.3 + i) * 0.06; });
     arms.forEach(({ piv, s }) => {
       const ov = fx.arms && fx.arms[s < 0 ? 'L' : 'R'];                // 指示があれば、その腕はそのとおりに動かす
-      const [rx, rz] = ov || armPose(p.pose, s, t, p.talk);
+      const [rx, rz] = ov || (fx.arms ? [0, s * 0.62] : armPose(p.pose, s, t, p.talk));   // 腕の指示中は、指示のない腕は感情ポーズ(ばんざい等)にせず下ろしておく
       const k = ov ? 0.3 : 0.18;
       piv.rotation.x = lerp(piv.rotation.x, rx, k); piv.rotation.z = lerp(piv.rotation.z, rz, k);
       // 頭が大きいので、腕をあげるときは肩を外側・手前に出して、頭の陰に隠れないようにする

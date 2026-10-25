@@ -346,7 +346,7 @@ export function createLumi3D({ width = 560, height = 720 } = {}) {
     renderer.render(scene, camera);
     return renderer.domElement;
   }
-  return { render, width, height, dispose() { renderer.dispose(); } };
+  return { render, width, height, setScale(f) { renderer.setSize(Math.max(64, Math.round(width * f)), Math.max(64, Math.round(height * f)), false); }, dispose() { renderer.dispose(); } };
 }
 
 try { window.Lumi3D = createLumi3D(); } catch (e) { console.warn('Lumi3D unavailable:', e && e.message); }

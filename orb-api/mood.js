@@ -23,7 +23,7 @@ function decayed(row, now = Date.now()) {
 
 // 今回の話しかけ方(manner)と話題(topic)で気分を動かす
 //   manner: neutral / kind / thanks / commanding / rude    topic: none / happy / sad
-function apply(m, { manner, topic }) {
+function apply(m, { manner, topic }, gain = 1) {   // gain: 怒りの上がり幅の倍率(管理メニューの「怒りやすさ」)
   const o = { ...m };
   switch (manner) {
     case 'kind': o.joy += 6; o.anger -= 6; o.affinity += 1.5; o.streak = 0; break;
@@ -35,6 +35,7 @@ function apply(m, { manner, topic }) {
   }
   if (topic === 'happy') { o.joy += 8; o.sadness -= 3; }
   if (topic === 'sad') { o.sadness += 10; o.joy -= 3; o.affinity += 1; }   // つらい話を打ち明けてくれた
+  { const dA = o.anger - m.anger; if (dA > 0) o.anger = m.anger + dA * gain; }   // 怒りが上がるときだけ、倍率をかける
   o.joy = clamp(o.joy); o.anger = clamp(o.anger); o.sadness = clamp(o.sadness); o.affinity = clamp(o.affinity);
   return o;
 }

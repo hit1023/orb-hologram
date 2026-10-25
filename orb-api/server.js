@@ -433,6 +433,11 @@ http.createServer(async (req, res) => {
       return send(res, 200, { ok: true, deleted: memory.forget(u.id) });
     }
 
+    if (url === '/api/prefs') {                                       // ユーザーごとの設定の保存と取得(別の端末でも同じ設定になる)
+      const u = currentUser(req); if (!u) return send(res, 401, { error: 'login required' });
+      if (req.method === 'GET') return send(res, 200, { prefs: store.getPrefs(u.id) });
+      if (req.method === 'PUT') { const b = await readJson(req); return send(res, 200, { prefs: store.setPrefs(u.id, b && b.prefs) }); }
+    }
     if (req.method === 'POST' && url === '/api/location') {           // 位置情報(約1kmに丸める)から、天気と気温を取る
       const u = currentUser(req); if (!u) return send(res, 401, { error: 'login required' });
       if (!store.getSettings().weather_enabled) return send(res, 200, { disabled: true });

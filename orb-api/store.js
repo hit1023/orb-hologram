@@ -54,6 +54,10 @@ db.exec(`
     created_at INTEGER NOT NULL, done_at INTEGER
   );
   CREATE INDEX IF NOT EXISTS jobs_user ON jobs (user_id, status);
+  CREATE TABLE IF NOT EXISTS user_prefs (
+    user_id INTEGER PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
+    data TEXT NOT NULL, updated_at INTEGER NOT NULL
+  );
   CREATE TABLE IF NOT EXISTS user_env (
     user_id INTEGER PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
     lat REAL, lng REAL, weather TEXT, updated_at INTEGER NOT NULL
@@ -185,6 +189,18 @@ function setSettings(patch) {
   return getSettings();
 }
 // ---- ユーザーの場所と天気(場所は小数2桁=約1kmに丸めて保存) ----
+// ユーザーごとの画面の設定(表示モード・大きさ・ピラミッドの調整・最後の位置など)。キーは orb で始まるものだけ、値は短い文字列だけ
+const getPrefs = (userId) => { const r = db.prepare('SELECT data FROM user_prefs WHERE user_id = ?').get(userId); try { return r ? JSON.parse(r.data) : {}; } catch (_) { return {}; } };
+function setPrefs(userId, incoming) {
+  const cur = getPrefs(userId);
+  for (const [k, v] of Object.entries(incoming || {})) {
+    if (!/^(orb[.\w]*|seenJobs)$/.test(k) || k.length > 40) continue;
+    if (v === null) delete cur[k]; else if (typeof v === 'string' && v.length <= 4000) cur[k] = v;
+  }
+  const data = JSON.stringify(cur); if (data.length > 32000) return cur;
+  db.prepare(`INSERT INTO user_prefs (user_id, data, updated_at) VALUES (?, ?, ?) ON CONFLICT(user_id) DO UPDATE SET data = excluded.data, updated_at = excluded.updated_at`).run(userId, data, Date.now());
+  return cur;
+}
 const saveEnv = (userId, lat, lng, weather) => db.prepare(`INSERT INTO user_env (user_id, lat, lng, weather, updated_at) VALUES (?, ?, ?, ?, ?)
   ON CONFLICT(user_id) DO UPDATE SET lat = excluded.lat, lng = excluded.lng, weather = excluded.weather, updated_at = excluded.updated_at`).run(userId, lat, lng, JSON.stringify(weather), now());
 function getEnv(userId) {
@@ -254,5 +270,5 @@ const turnStats = (userId) => db.prepare('SELECT COUNT(*) AS n, MIN(created_at) 
 const countTurns = (userId) => db.prepare('SELECT COUNT(*) AS n FROM turns WHERE user_id = ?').get(userId).n;
 const clearTurns = (userId) => db.prepare('DELETE FROM turns WHERE user_id = ?').run(userId).changes;
 
-module.exports = { recentUserTexts, getGrowth, saveGrowth, clearJobs, listJobs, addJob, nextPendingJob, setJobRunning, finishJob, takeDoneJob, markJobDelivered, failStaleJobs, countJobs, getSettings, setSettings, saveEnv, getEnv, clearEnv, saveInterests, getInterests, toldNews, markNewsTold, turnStats, addTurn, setTurnVec, recentTurns, turnsWithVec, countTurns, clearTurns, createUser, countUsers, countAdmins, listUsers, getUser, deleteUser, setPassword, checkLogin, verifyUserPassword,
+module.exports = { getPrefs, setPrefs, recentUserTexts, getGrowth, saveGrowth, clearJobs, listJobs, addJob, nextPendingJob, setJobRunning, finishJob, takeDoneJob, markJobDelivered, failStaleJobs, countJobs, getSettings, setSettings, saveEnv, getEnv, clearEnv, saveInterests, getInterests, toldNews, markNewsTold, turnStats, addTurn, setTurnVec, recentTurns, turnsWithVec, countTurns, clearTurns, createUser, countUsers, countAdmins, listUsers, getUser, deleteUser, setPassword, checkLogin, verifyUserPassword,
   createSession, sessionUser, deleteSession, loadMoodRow, saveMoodRow, saveImpression, resetMood, validateNewUser };

@@ -1423,10 +1423,33 @@ function showLogin(msg) {
   $('who').classList.remove('on'); $('login').hidden = false; $('lgErr').textContent = msg || '';
   $('lgPass').value = ''; setTimeout(() => $('lgUser').focus(), 50);
 }
+// --- ユーザーごとの設定(表示モード・大きさ・ピラミッドの調整・位置の ON/OFF・最後の位置など)をサーバーに保存する ---
+// ブラウザの localStorage の「orb…」のキーを、そのまま写す。ログインしたら、サーバーの設定を取り込む(違っていたら1回だけ読み込み直す)
+const PREF_RX = /^(orb[.\w]*|seenJobs)$/;
+const _lsSet = Storage.prototype.setItem, _lsDel = Storage.prototype.removeItem;
+let prefsTimer = null, prefsReady = false;
+function collectPrefs() { const o = {}; try { for (let i = 0; i < localStorage.length; i++) { const k = localStorage.key(i); if (PREF_RX.test(k)) o[k] = localStorage.getItem(k); } } catch (_) {} return o; }
+function schedulePrefsSave() { if (!me || !prefsReady) return; clearTimeout(prefsTimer); prefsTimer = setTimeout(() => { jsend('PUT', '/api/prefs', { prefs: collectPrefs() }).catch(() => {}); }, 800); }
+Storage.prototype.setItem = function (k, v) { _lsSet.call(this, k, v); if (this === localStorage && PREF_RX.test(k)) schedulePrefsSave(); };
+Storage.prototype.removeItem = function (k) { _lsDel.call(this, k); if (this === localStorage && PREF_RX.test(k)) schedulePrefsSave(); };
+async function syncPrefs() {
+  try {
+    const r = await _fetch('/api/prefs'); if (!r.ok) return; const srv = (await r.json()).prefs || {};
+    const loc = collectPrefs(), keys = Object.keys(srv);
+    if (!keys.length) { prefsReady = true; schedulePrefsSave(); return; }           // はじめて: いまのブラウザの設定を、このユーザーの設定にする
+    const diff = keys.filter(k => loc[k] !== srv[k]);
+    const flag = 'orb.prefsApplied:' + me.username;
+    if (diff.length && !sessionStorage.getItem(flag)) {                              // 別の端末・別のユーザーの設定 → 取り込んで、1回だけ読み込み直す
+      for (const k of keys) _lsSet.call(localStorage, k, srv[k]);
+      sessionStorage.setItem(flag, '1'); location.reload(); return;
+    }
+    prefsReady = true; schedulePrefsSave();
+  } catch (_) { prefsReady = true; }
+}
 function applyAuth(j) {
   me = j.user; $('login').hidden = true; $('lgPass').value = '';
   $('meName').textContent = '👤 ' + me.username; $('adminBtn').style.display = me.role === 'admin' ? '' : 'none';
-  $('who').classList.add('on'); setMood(j.mood); applySettings(j.settings); startGeo(false); startEvents(); if (!jobsAt) refreshJobs(); if (j.growth) setGrowth(j.growth); loadKinds();
+  $('who').classList.add('on'); setMood(j.mood); applySettings(j.settings); startGeo(false); startEvents(); if (!jobsAt) refreshJobs(); if (j.growth) setGrowth(j.growth); loadKinds(); syncPrefs();
 }
 $('loginForm').addEventListener('submit', async (e) => {
   e.preventDefault(); $('lgErr').textContent = '';
@@ -1652,14 +1675,20 @@ $('sSave').onclick = async () => {
 let geoAt = 0;
 function startGeo(force) {
   try { if (localStorage.getItem('orb.geo') === '0') { $('wx').textContent = ''; return; } } catch (_) {}
-  if (!S.weather_enabled || !me || !navigator.geolocation) return;
-  if (!force && Date.now() - geoAt < 25 * 60000) return; geoAt = Date.now();
-  navigator.geolocation.getCurrentPosition(async (pos) => {
+  if (!S.weather_enabled || !me) return;
+  const postLoc = async (lat, lng, remember) => {
     try {
-      const r = await jsend('POST', '/api/location', { lat: pos.coords.latitude, lng: pos.coords.longitude }); const j = await r.json();
+      const r = await jsend('POST', '/api/location', { lat, lng }); const j = await r.json();
+      if (remember) { try { localStorage.setItem('orb.loc', JSON.stringify({ lat: Math.round(lat * 100) / 100, lng: Math.round(lng * 100) / 100 })); } catch (_) {} }   // 最後の位置を覚えておく(ユーザーごとに保存される)
       if (r.ok && j.weather) { const w = j.weather; $('wx').textContent = `${w.icon} ${w.temp}℃`; $('wx').title = `${w.desc} / 体感${w.feels}℃ / 最高${w.max}℃ 最低${w.min}℃`; }
     } catch (_) {}
-  }, () => { $('wx').textContent = ''; }, { maximumAge: 1800000, timeout: 10000 });
+  };
+  const lastLoc = () => { try { return JSON.parse(localStorage.getItem('orb.loc') || 'null'); } catch (_) { return null; } };
+  if (!navigator.geolocation) { const l = lastLoc(); if (l) postLoc(l.lat, l.lng, false); return; }
+  if (!force && Date.now() - geoAt < 25 * 60000) return; geoAt = Date.now();
+  navigator.geolocation.getCurrentPosition((pos) => postLoc(pos.coords.latitude, pos.coords.longitude, true),
+    () => { const l = lastLoc(); if (l) postLoc(l.lat, l.lng, false); else $('wx').textContent = ''; },   // 位置が取れないときは、最後の位置で天気を出す
+    { maximumAge: 1800000, timeout: 10000 });
 }
 const paintGeo = () => { let on = true; try { on = localStorage.getItem('orb.geo') !== '0'; } catch (_) {} $('geoBtn').textContent = '位置: ' + (on ? 'ON' : 'OFF'); $('geoBtn').classList.toggle('on', on); };
 $('geoBtn').onclick = () => { let on = true; try { on = localStorage.getItem('orb.geo') !== '0'; localStorage.setItem('orb.geo', on ? '0' : '1'); } catch (_) {} paintGeo(); if (on) $('wx').textContent = ''; else startGeo(true); };

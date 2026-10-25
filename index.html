@@ -63,6 +63,8 @@
     <option value="board">斜め板(1枚)</option>
     <option value="pyramid">ピラミッド(4方向)</option>
   </select>
+  <button id="pyrApex" title="ピラミッドの置き方。先端が上(スマホを下向きに置く)か、先端が下(スマホの上にピラミッドを置く)か。像が逆さまのときに押す" style="display:none">先端: 上</button>
+  <button id="pyrMir" title="像が左右逆(文字が鏡文字)のときに押す" style="display:none">左右反転: OFF</button>
   <button id="pyrFlip" title="ピラミッドの横顔(左右)の向きを入れ替える。見ている向きが逆だったときに押す" style="display:none">向き反転</button>
   <button id="mic">マイク開始</button>
   <button id="duplex" title="話している途中でも割り込める(全二重)">割込: ON</button>
@@ -200,7 +202,12 @@ function log(extra) {
   if (extra && !/^(あなた|ルミ|認識中)/.test(extra)) setNotice(extra);
 }
 // 左上の小さな状態表示は、板に映ると邪魔なので通常モード(画面確認)のときだけ出す
-function applyLogVisibility() { $('log').style.display = $('mode').value === 'plain' ? '' : 'none'; $('pyrFlip').style.display = $('mode').value === 'pyramid' && $('char').value === 'mascot3d' ? '' : 'none'; }
+let pyrApexUp = true, pyrMir = false; try { pyrApexUp = localStorage.getItem('orb.pyrApex') !== 'down'; pyrMir = localStorage.getItem('orb.pyrMir') === '1'; } catch (_) {}
+const paintPyr = () => { $('pyrApex').textContent = '先端: ' + (pyrApexUp ? '上' : '下'); $('pyrMir').textContent = '左右反転: ' + (pyrMir ? 'ON' : 'OFF'); };
+$('pyrApex').onclick = () => { pyrApexUp = !pyrApexUp; try { localStorage.setItem('orb.pyrApex', pyrApexUp ? 'up' : 'down'); } catch (_) {} paintPyr(); };
+$('pyrMir').onclick = () => { pyrMir = !pyrMir; try { localStorage.setItem('orb.pyrMir', pyrMir ? '1' : '0'); } catch (_) {} paintPyr(); };
+paintPyr();
+function applyLogVisibility() { $('pyrApex').style.display = $('pyrMir').style.display = $('mode').value === 'pyramid' ? '' : 'none'; $('log').style.display = $('mode').value === 'plain' ? '' : 'none'; $('pyrFlip').style.display = $('mode').value === 'pyramid' && $('char').value === 'mascot3d' ? '' : 'none'; }
 $('pyrFlip').onclick = () => { pyrDir = -pyrDir; try { localStorage.setItem('orb.pyrDir', String(pyrDir)); } catch (_) {} };
 $('char').addEventListener('change', () => applyLogVisibility());
 
@@ -1059,7 +1066,9 @@ function frame(now) {
       ctx.save();
       ctx.translate(W / 2, H * (0.2 + pos * 0.6));
       ctx.rotate(k * Math.PI / 2);
-      ctx.translate(0, d); ctx.scale(1, -1);
+      ctx.translate(0, d);
+      if (!pyrApexUp) ctx.scale(1, -1);          // 先端が下(画面の上にピラミッド): 頭が外向き / 先端が上(スマホを下向きに置く): 頭が中心向き
+      if (pyrMir) ctx.scale(-1, 1);
       drawChar(R, time, k);
       ctx.restore();
     }

@@ -108,9 +108,9 @@
 </div>
 <div id="jobs" class="overlay" hidden>
   <div class="card wide">
-    <div class="row" style="justify-content:space-between"><h1>調べ物の状況</h1><button id="jobsClose" class="sm">閉じる</button></div>
+    <div class="row" style="justify-content:space-between"><h1>調べ物</h1><span><button id="jobsClear" class="sm">履歴を消す</button> <button id="jobsClose" class="sm">閉じる</button></span></div>
     <div id="jobsList"></div>
-    <div class="err" style="color:#7ab">ルミが「調べておくね」と言ったことを、裏で調べています。終わると、ルミが静かなときに報告します。</div>
+    <div class="err" style="color:#7ab">調べ終わったら、ルミが教えてくれます。</div>
   </div>
 </div>
 <div id="admin" class="overlay" hidden>
@@ -1444,15 +1444,15 @@ async function refreshJobs() {
 }
 function renderJobs() {
   const box = $('jobsList'); box.textContent = '';
-  if (!jobsInfo.jobs.length) { box.textContent = 'まだ、調べ物はありません。「〜を調べておいて」と話しかけてみてください。'; return; }
-  const ST = { pending: ['待ち', '#fc6'], running: ['調べ中', '#6cf'], done: ['完了', '#7e9'], failed: ['調べられませんでした', '#f99'] };
+  if (!jobsInfo.jobs.length) { box.textContent = 'まだありません。「〜を調べておいて」と話しかけてみてください。'; return; }
+  const ST = { pending: ['調べ中', '#6cf'], running: ['調べ中', '#6cf'], done: ['完了', '#7e9'], failed: ['うまく調べられなかった', '#f99'] };
   for (const j of jobsInfo.jobs) {
     const row = document.createElement('div'); row.className = 'urow';
     const nm = document.createElement('div'); nm.className = 'nm'; nm.textContent = j.query;
     const tag = document.createElement('span'); tag.className = 'tag'; const [lab, col] = ST[j.status] || ['', '#9bd']; tag.textContent = j.status === 'done' && j.delivered ? '報告済み' : lab; tag.style.color = col; tag.style.borderColor = col; nm.appendChild(tag);
     const sub = document.createElement('div'); sub.className = 'sub';
     const live = j.status === 'pending' || j.status === 'running';
-    sub.textContent = live ? `経過 ${fmtSec((jobsInfo.now + (performance.now() - jobsInfo.t) - j.created_at) / 1000)}` : (j.done_at ? `所要 ${fmtSec((j.done_at - j.created_at) / 1000)}` : '');
+    sub.textContent = live ? `${fmtSec((jobsInfo.now + (performance.now() - jobsInfo.t) - j.created_at) / 1000)} 経過` : '';
     row.append(nm, document.createElement('div'), sub);
     if (j.summary) { const sm = document.createElement('div'); sm.className = 'sub'; sm.style.color = '#9bd'; sm.textContent = j.summary; row.appendChild(sm); }
     box.appendChild(row);
@@ -1460,6 +1460,7 @@ function renderJobs() {
 }
 $('jobBadge').onclick = () => { $('jobs').hidden = false; refreshJobs().then(renderJobs); renderJobs(); };
 $('jobsClose').onclick = () => { $('jobs').hidden = true; };
+$('jobsClear').onclick = async () => { await jsend('POST', '/api/jobs/clear'); refreshJobs(); };
 setInterval(() => { if (!me) return; const every = jobsInfo.pending ? 8000 : 90000; if (performance.now() - jobsAt > every) refreshJobs(); if (!$('jobs').hidden) renderJobs(); }, 1000);
 
 // --- あとで調べて報告する: 裏でヘッドレスClaudeが調べ、終わったらSSE(pub/sub)で知らせてくれる。ルミが静かなときに報告する ---

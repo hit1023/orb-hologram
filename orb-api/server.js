@@ -52,7 +52,7 @@ wink_left(左目でウインク。ルミ自身の左目) wink_right(右目でウ
 複数の依頼は言われた順に並べる(最大4つ)。この一覧にない動きは、いちばん近いものを選ぶ。
 依頼がなくても、相手の言葉に自然に反応して、動きを1つだけ付けてよい。例: ありがとう→bow、かわいい・すてき→shy、すごい・やったね→banzai、おやすみ→sleep、ねむい→yawn、寒い→shiver、わからない→shrug、びっくりする話→surprise、疲れた→sit、ほめられた→sparkle。
 ただし毎回は付けず、自然なときだけ(目安は3回に1回くらい)。普通の会話ではactionsは[]。
-いま答えられない質問(最新のニュース・知らない固有名詞・調べ物が必要なこと)で、急ぎでないときだけ、researchに調べたい内容を短い日本語で書き、replyは「調べておくね。わかったらあとで教えるよ」のように伝える。それ以外のresearchは空文字。「調べてみるね」「あとで教えるね」と言うときは、必ずresearchを書く。
+いま答えられない質問(最新のニュース・知らない固有名詞・調べ物が必要なこと)で、急ぎでないときだけ、researchに調べたい内容を短い日本語で書き、replyは「調べておくね！」のような10〜20文字の短い一言にする。それ以外のresearchは空文字。「調べてみるね」「あとで教えるね」と言うときは、必ずresearchを書く。
 動きの依頼のときのreplyは、動きに合う短い一言にする(例:「はーい！」「こうかな？」「えへへ」)。`;
 
 function buildPrompt(text, history) {
@@ -173,6 +173,20 @@ async function extractInterests(user, force = false) {
       store.saveInterests(user.id, list, total); console.log(`[interest] ${user.username} ${JSON.stringify(list)}`);
     }
   } catch (_) { /* 失敗しても会話は続ける */ } finally { interestBusy.delete(user.id); }
+}
+
+// 長くなりすぎた返事を、文の切れ目で短くする(報告・話題用)
+function shorten(text, maxSent = 2, maxChars = 110) {
+  const parts = String(text).match(/[^。！？!?]+[。！？!?]?/g) || [String(text)];
+  let out = ''; for (const p of parts.slice(0, maxSent)) { if (out && (out + p).length > maxChars) break; out += p; }
+  return (out || String(text)).slice(0, maxChars + 30).trim();
+}
+
+// 一覧に出す要約: 記号を取って、最初の1文を短く
+function plainSummary(t) {
+  const s = String(t || '').replace(/\*\*|^#+\s*|^[-・●]\s*/gm, '').replace(/https?:\/\/\S+/g, '').replace(/\s+/g, ' ').trim();
+  const first = (s.match(/^[^。！？]+[。！？]?/) || [s])[0];
+  return first.length > 70 ? first.slice(0, 70) + '…' : first;
 }
 
 function parseReply(raw) {
@@ -353,6 +367,7 @@ async function researchTick() {
   const t0 = Date.now();
   try {
     const r = await runResearch(job.query);
+    if (r.skipped) { store.finishJob(job.id, 'skipped', null, null); console.log(`[research] skipped #${job.id} (調べようがない依頼)`); return; }   // 不明な依頼は、聞き返さず黙って取り下げる
     store.finishJob(job.id, 'done', r.text, r.sources);
     console.log(`[research] done #${job.id} ${job.username} ${Date.now() - t0}ms "${job.query.slice(0, 30)}"`);
     bus.publish(job.user_id, job.username, 'research_done', { id: job.id, query: job.query });
@@ -463,10 +478,14 @@ http.createServer(async (req, res) => {
       res.writeHead(200, { 'content-type': 'text/event-stream; charset=utf-8', 'cache-control': 'no-cache, no-transform', connection: 'keep-alive', 'x-accel-buffering': 'no' });
       res.write('retry: 5000\n\n: connected\n\n'); bus.subscribe(u.id, res); return;
     }
+    if (req.method === 'POST' && url === '/api/jobs/clear') {               // 調べ物の履歴を消す(調べ中・報告待ちは残す)
+      const u = currentUser(req); if (!u) return send(res, 401, { error: 'login required' });
+      return send(res, 200, { ok: true, deleted: store.clearJobs(u.id) });
+    }
     if (req.method === 'GET' && url === '/api/jobs') {                      // 調べ物の状況(調べ中・完了・報告済み)
       const u = currentUser(req); if (!u) return send(res, 401, { error: 'login required' });
       const rows = store.listJobs(u.id, 10).map(j => ({ id: j.id, query: j.query, status: j.status, delivered: !!j.delivered, created_at: j.created_at, done_at: j.done_at,
-        summary: j.status === 'done' ? String(j.result || '').replace(/\s+/g, ' ').slice(0, 240) : '', sources: (() => { try { return JSON.parse(j.sources || '[]'); } catch (_) { return []; } })() }));
+        summary: j.status === 'done' ? plainSummary(j.result) : '', sources: (() => { try { return JSON.parse(j.sources || '[]'); } catch (_) { return []; } })() }));
       return send(res, 200, { jobs: rows, pending: rows.filter(j => j.status === 'pending' || j.status === 'running').length, ready: rows.filter(j => j.status === 'done' && !j.delivered).length, now: Date.now() });
     }
     if (req.method === 'POST' && url === '/api/report') {                   // 調べ終わったことを、ルミの口調で報告する
@@ -475,9 +494,9 @@ http.createServer(async (req, res) => {
       const m = moodLib.decayed(store.loadMoodRow(user.id));
       const system = SYSTEM + `\n\n話し相手のユーザー名は「${user.username}」。` + moodLib.guide(m, false, (store.loadMoodRow(user.id) || {}).impression);
       const prompt = `(相手はいま話しかけていない。さっき「調べておくね」と約束したことを、調べ終わったので、ルミのほうから報告する。)\n調べたこと: ${job.query}\n調査結果:\n${job.result}\n` +
-        'この調査結果だけを根拠に、ルミの口調で2〜4文で報告する。結果にないことは言わない。確認できなかった点は正直に言う。断定しすぎず、出典の媒体名を一言入れる。URLは声に出さない。最後に感想や質問を軽く添える。actionsは[]。';
+        'この調査結果だけを根拠に、ルミの口調で、1〜2文・80文字以内の短さで報告する。いちばん大事な1点だけを言う。結果にないことは言わない。確認できなかったら、そう一言で言う。URLや記号は言わない。actionsは[]。';
       let out; try { out = parseReply(await runCloudflare(prompt, [], system)); } catch (_) { out = { reply: `さっきの調べ物、わかったよ。${job.result.replace(/\s+/g, ' ').slice(0, 90)}`, emotion: 'happy' }; }
-      out.actions = []; delete out.research;
+      out.actions = []; delete out.research; out.reply = shorten(out.reply, 2, 110);
       store.markJobDelivered(job.id);
       store.addTurn(user.id, `（ルミから報告）${job.query}`.slice(0, 200), out.reply, out.emotion);
       let sources = []; try { sources = JSON.parse(job.sources || '[]'); } catch (_) {}
@@ -499,9 +518,9 @@ http.createServer(async (req, res) => {
       const system = SYSTEM + `\n\n話し相手のユーザー名は「${user.username}」。` + moodLib.guide(m, false, (store.loadMoodRow(user.id) || {}).impression) + (env ? weather.block(env) : '');
       const stored = store.recentTurns(user.id, 6).flatMap(t => [{ role: 'user', text: t.user_text }, { role: 'ai', text: t.reply }]);
       const prompt = useWeather ? `(相手はいま話しかけていない。ルミのほうから、相手のいる場所の天気の話題を切り出す。)\n天気: ${env.weather.desc}、気温${env.weather.temp}℃(体感${env.weather.feels}℃)${env.weather.rainProb != null ? `、雨の確率${env.weather.rainProb}%` : ''}\nこの天気と気温に合った声かけ(傘・服装・飲み物・過ごし方など)を、ルミの口調で1〜3文で話しかける。地名は言わない。最後に相手のようすを軽く聞く。actionsは[]。` : `(相手はいま話しかけていない。ルミのほうから、ニュースの話題を切り出す。)\n見出し: 「${n.title}」${n.source ? `(${n.source})` : ''}${n.keyword ? `\n相手が興味を持っていそうなこと: ${n.keyword}` : ''}\n` +
-        '見出しだけを根拠に、「そういえばこんなニュースがあったよ」と、ルミの口調で1〜3文で話しかける。見出しにない事実は作らない。断定せず「〜らしいよ」と伝える。最後に相手の意見や経験を軽く聞く。actionsは[]。';
+        '見出しだけを根拠に、「そういえばこんなニュースがあったよ」と、ルミの口調で、1〜2文・70文字以内の短さで話しかける。見出しにない事実は作らない。断定せず「〜らしいよ」と伝える。actionsは[]。';
       let raw; try { raw = await runCloudflare(prompt, stored, system); } catch (e) { raw = await runClaude(buildPrompt(prompt, stored), system); }
-      const out = parseReply(raw); out.actions = [];
+      const out = parseReply(raw); out.actions = []; out.reply = shorten(out.reply, 2, 110);
       if (m.anger >= 60 && ['neutral', 'happy'].includes(out.emotion)) out.emotion = 'angry';
       store.addTurn(user.id, `（ルミから話題）${n.title}`.slice(0, 200), out.reply, out.emotion);
       out.news = { title: n.title, source: n.source, keyword: n.keyword || '' }; out.mood = { ...moodLib.round(m), stance: moodLib.stance(m) };
@@ -529,12 +548,18 @@ http.createServer(async (req, res) => {
       }
       const out = parseReply(raw);
       if (turn.refused) out.actions = ['sulk'];
-      let rq = out.research || '';                                                  // あとで調べて報告する(「調べてみるね」と言ったのに依頼が空なら、あなたの言葉を依頼にする)
-      if (!rq && /(調べて(み|お)る|調べておく|あとで教え|後で教え)/.test(out.reply)) rq = text.slice(0, 80);
+      let rq = out.research || '';                                                  // あとで調べて報告する
       out.researching = false;
-      if (rq && store.getSettings().research_enabled) {
-        const id = store.addJob(user.id, rq, text.slice(0, 200));
-        if (id) { out.researching = true; bus.publish(user.id, user.username, 'research_queued', { id, query: rq }); setTimeout(() => researchTick().catch(() => {}), 200); }
+      const enqueue = (q) => {
+        if (!q || !store.getSettings().research_enabled) return false;
+        const id = store.addJob(user.id, q, text.slice(0, 200)); if (!id) return false;
+        bus.publish(user.id, user.username, 'research_queued', { id, query: q }); setTimeout(() => researchTick().catch(() => {}), 200); return true;
+      };
+      if (rq) out.researching = enqueue(rq);
+      else if (/(調べて(み|お)る|調べておく|あとで教え|後で教え)/.test(out.reply)) {      // 「調べるね」と言ったのに依頼が空 → 会話の流れから、具体的な調べ物を短く抜き出す(あいまいなら作らない)
+        const ctx = hist.slice(-4).map(h => `${h.role === 'user' ? '相手' : 'ルミ'}: ${String(h.text).slice(0, 80)}`).join('\n') + `\n相手: ${text.slice(0, 120)}\nルミ: ${out.reply.slice(0, 120)}`;
+        cfText('会話の流れから、ルミが「調べておく」と約束した具体的な調べ物を、Web検索に使える短い日本語(30字以内)で1つだけ書く。具体的な調べ物がない・あいまいなときは「なし」とだけ書く。', ctx, 60)
+          .then(q => { q = (q || '').trim().replace(/^["「『]|["」』]$/g, ''); if (q && !/^なし/.test(q) && q.length <= 40) enqueue(q); }).catch(() => {});
       }
       delete out.research;
       if (turn.raw.anger >= 60 && ['neutral', 'happy'].includes(out.emotion)) out.emotion = 'angry';

@@ -5,7 +5,8 @@
 set -euo pipefail
 cd "$(dirname "$0")/.."
 log() { echo "$(date '+%F %T') $*"; }
-health() { for _ in $(seq 1 45); do curl -fsS -m 3 "http://127.0.0.1:8897/api/health" >/dev/null 2>&1 && curl -fsS -m 3 "http://127.0.0.1:8897/" | grep -q "ORB Hologram" && return 0; sleep 2; done; return 1; }
+# 注意: curl | grep -q だと、ページが大きいとき(パイプの容量超え) grep が先に閉じて curl が 23 で失敗し、pipefail でヘルスチェックが誤って落ちる。本文はいったん変数に受ける。
+health() { local body; for _ in $(seq 1 45); do curl -fsS -m 3 "http://127.0.0.1:8897/api/health" >/dev/null 2>&1 && body=$(curl -fsS -m 3 "http://127.0.0.1:8897/" 2>/dev/null) && grep -q "ORB Hologram" <<<"$body" && return 0; sleep 2; done; return 1; }
 
 git fetch -q origin main
 OLD=$(git rev-parse HEAD); NEW=$(git rev-parse origin/main)

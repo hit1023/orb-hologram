@@ -77,6 +77,7 @@
     </span>
     <button id="adminBtn" class="sm" style="display:none">管理</button>
     <button id="pwBtn" class="sm">パスワード変更</button>
+    <button id="forgetBtn" class="sm" title="ルミが覚えている、あなたとの会話を全部消す">記憶を消す</button>
     <button id="logoutBtn" class="sm">ログアウト</button>
   </div>
 </div>
@@ -1191,6 +1192,11 @@ $('loginForm').addEventListener('submit', async (e) => {
     applyAuth(j);
   } catch (_) { $('lgErr').textContent = 'つながりませんでした'; }
 });
+$('forgetBtn').onclick = async () => {
+  if (!confirm('ルミが覚えているあなたとの会話を、すべて消します。よろしいですか?')) return;
+  const r = await jsend('POST', '/api/memory/clear'); const j = await r.json();
+  alert(r.ok ? `${j.deleted}件の会話を消しました` : (j.error || '消せませんでした'));
+};
 $('logoutBtn').onclick = async () => { try { await jsend('POST', '/api/auth/logout'); } catch (_) {} showLogin(); };
 $('pwBtn').onclick = async () => {
   const current = prompt('いまのパスワード'); if (!current) return;
@@ -1225,13 +1231,17 @@ async function loadUsers() {
       $('adMsg').className = 'err' + (rr.ok ? ' ok' : ''); $('adMsg').textContent = rr.ok ? `${u.username} のパスワードを変えました` : jj.error;
     });
     mk('気分リセット', '', async () => { await jsend('POST', `/api/admin/users/${u.id}/mood-reset`); loadUsers(); });
+    mk('記憶を消す', '', async () => {
+      if (!confirm(`${u.username} の会話履歴と記憶(${u.turns}件)を消しますか?`)) return;
+      await jsend('POST', `/api/admin/users/${u.id}/memory-clear`); loadUsers();
+    });
     if (me && u.id !== me.id) mk('削除', 'danger', async () => {
       if (!confirm(`${u.username} を削除しますか?`)) return;
       const rr = await jsend('DELETE', `/api/admin/users/${u.id}`); const jj = await rr.json();
       if (!rr.ok) { $('adMsg').className = 'err'; $('adMsg').textContent = jj.error; } else loadUsers();
     });
     const sub = document.createElement('div'); sub.className = 'sub';
-    sub.textContent = `最終ログイン ${fmtDate(u.last_login)}  ／  気分 😊${u.mood.joy} 😠${u.mood.anger} 😢${u.mood.sadness}`;
+    sub.textContent = `最終ログイン ${fmtDate(u.last_login)}  ／  気分 😊${u.mood.joy} 😠${u.mood.anger} 😢${u.mood.sadness}  ／  記憶 ${u.turns}件`;
     row.append(nm, acts, sub); box.appendChild(row);
   }
 }

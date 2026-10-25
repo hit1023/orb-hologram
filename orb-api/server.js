@@ -9,6 +9,7 @@ const http = require('http');
 const { spawn } = require('child_process');
 const store = require('./store');
 const moodLib = require('./mood');
+const memory = require('./memory');
 
 const PORT = +process.env.PORT || 3000;
 const MODEL = process.env.CLAUDE_MODEL || 'haiku';
@@ -291,28 +292,34 @@ http.createServer(async (req, res) => {
       return send(res, 200, { ok: true });
     }
 
+    if (req.method === 'POST' && url === '/api/memory/clear') {       // 自分の会話履歴と記憶を消す
+      const u = currentUser(req); if (!u) return send(res, 401, { error: 'login required' });
+      return send(res, 200, { ok: true, deleted: memory.forget(u.id) });
+    }
+
     // ---- ユーザー管理(管理者のみ) ----
     if (url.startsWith('/api/admin/')) {
       const me = currentUser(req);
       if (!me) return send(res, 401, { error: 'login required' });
       if (me.role !== 'admin') return send(res, 403, { error: '管理者だけが使えます' });
       if (req.method === 'GET' && url === '/api/admin/users')
-        return send(res, 200, { users: store.listUsers().map(u => ({ ...u, mood: moodView(u.id) })) });
+        return send(res, 200, { users: store.listUsers().map(u => ({ ...u, mood: moodView(u.id), turns: store.countTurns(u.id) })) });
       if (req.method === 'POST' && url === '/api/admin/users') {
         const { username, password, role } = await readJson(req);
         const u = store.createUser(String(username || '').trim(), password, role === 'admin' ? 'admin' : 'user');
         console.log(`[admin] ${me.username} がユーザー ${u.username} を作成`);
         return send(res, 200, { user: u });
       }
-      const m = url.match(/^\/api\/admin\/users\/(\d+)(?:\/(password|mood-reset))?$/);
+      const m = url.match(/^\/api\/admin\/users\/(\d+)(?:\/(password|mood-reset|memory-clear))?$/);
       if (m) {
         const id = +m[1];
         if (req.method === 'DELETE' && !m[2]) {
           if (id === me.id) return send(res, 400, { error: '自分自身は削除できません' });
-          store.deleteUser(id); console.log(`[admin] ${me.username} がユーザー #${id} を削除`); return send(res, 200, { ok: true });
+          store.deleteUser(id); memory.forget(id); console.log(`[admin] ${me.username} がユーザー #${id} を削除`); return send(res, 200, { ok: true });
         }
         if (req.method === 'POST' && m[2] === 'password') { const { password } = await readJson(req); store.setPassword(id, password); return send(res, 200, { ok: true }); }
         if (req.method === 'POST' && m[2] === 'mood-reset') { store.resetMood(id); return send(res, 200, { ok: true }); }
+        if (req.method === 'POST' && m[2] === 'memory-clear') return send(res, 200, { ok: true, deleted: memory.forget(id) });
       }
       return send(res, 404, { error: 'not found' });
     }
@@ -328,22 +335,27 @@ http.createServer(async (req, res) => {
       const { text, history } = await readJson(req);
       if (!text || typeof text !== 'string') return send(res, 400, { error: 'text required' });
       const t0 = Date.now();
-      const turn = await userTurn(user, text.slice(0, 300));          // 話しかけ方を分析して、気分を更新する(/api/act と共有)
-      const system = SYSTEM + moodLib.guide(turn.raw, turn.refused);
+      // 話しかけ方の分析(気分の更新)と、過去の記憶の検索(埋め込み)を並べて待つ
+      const [turn, qvec] = await Promise.all([userTurn(user, text.slice(0, 300)), memory.embedQuery(text.slice(0, 300))]);
+      const mems = memory.recall(user.id, qvec);
+      const system = SYSTEM + `\n\n話し相手のユーザー名は「${user.username}」。` + moodLib.guide(turn.raw, turn.refused) + memory.block(mems);
+      const stored = store.recentTurns(user.id, 8).flatMap(t => [{ role: 'user', text: t.user_text }, { role: 'ai', text: t.reply }]);
+      const hist = stored.length ? stored : history;                  // 会話履歴はサーバーに保存したものを使う(ページを開き直しても続く)
       let raw, via = 'cf';
       try {
         if (!CF_ACCOUNT || !CF_TOKEN) throw new Error('no cloudflare key');
-        raw = await runCloudflare(text.slice(0, 500), history, system);
+        raw = await runCloudflare(text.slice(0, 500), hist, system);
       } catch (e) {
         console.log(`[chat] cloudflare failed (${e.message}) -> claude`);
-        via = 'claude'; raw = await runClaude(buildPrompt(text.slice(0, 500), history), system);
+        via = 'claude'; raw = await runClaude(buildPrompt(text.slice(0, 500), hist), system);
       }
       const out = parseReply(raw);
       if (turn.refused) out.actions = ['sulk'];
       if (turn.raw.anger >= 60 && ['neutral', 'happy'].includes(out.emotion)) out.emotion = 'angry';
       else if (turn.raw.sadness >= 60 && ['neutral', 'happy'].includes(out.emotion)) out.emotion = 'sad';
       out.mood = turn.mood; out.moodLabel = turn.moodLabel;
-      console.log(`[chat] ${user.username} ${via} ${Date.now() - t0}ms mood=${turn.mood.joy}/${turn.mood.anger}/${turn.mood.sadness} ${out.emotion} [${out.actions}]${turn.refused ? ' (ことわった)' : ''} ${out.reply}`);
+      memory.remember(user.id, text.slice(0, 300), out.reply, out.emotion);   // 履歴に保存して、あとから思い出せるようにする
+      console.log(`[chat] ${user.username} ${via} ${Date.now() - t0}ms mem=${mems.length} mood=${turn.mood.joy}/${turn.mood.anger}/${turn.mood.sadness} ${out.emotion} [${out.actions}]${turn.refused ? ' (ことわった)' : ''} ${out.reply}`);
       return send(res, 200, out);
     }
     if (req.method === 'POST' && url === '/api/act') {          // 動きと話しかけ方を速く判断する(Jev)。キーがなくても、気分の更新はする

@@ -30,6 +30,14 @@ db.exec(`
     streak INTEGER NOT NULL DEFAULT 0,
     updated_at INTEGER NOT NULL
   );
+  CREATE TABLE IF NOT EXISTS turns (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    user_text TEXT NOT NULL, reply TEXT NOT NULL, emotion TEXT,
+    created_at INTEGER NOT NULL,
+    vec BLOB
+  );
+  CREATE INDEX IF NOT EXISTS turns_user ON turns (user_id, id);
   PRAGMA foreign_keys = ON;
 `);
 db.exec('PRAGMA foreign_keys = ON');
@@ -128,5 +136,19 @@ function saveMoodRow(userId, m) {
 }
 const resetMood = (userId) => db.prepare('DELETE FROM moods WHERE user_id = ?').run(userId);
 
-module.exports = { createUser, countUsers, countAdmins, listUsers, getUser, deleteUser, setPassword, checkLogin, verifyUserPassword,
+// ---- 会話履歴(1回のやりとり=1行)。vec は意味検索用の埋め込みベクトル ----
+const MAX_TURNS = 3000;           // 1人あたりの保存上限(古いものから消す)
+function addTurn(userId, userText, reply, emotion) {
+  const r = db.prepare('INSERT INTO turns (user_id, user_text, reply, emotion, created_at) VALUES (?, ?, ?, ?, ?)').run(userId, userText, reply, emotion || null, now());
+  const n = db.prepare('SELECT COUNT(*) AS n FROM turns WHERE user_id = ?').get(userId).n;
+  if (n > MAX_TURNS) db.prepare('DELETE FROM turns WHERE id IN (SELECT id FROM turns WHERE user_id = ? ORDER BY id LIMIT ?)').run(userId, n - MAX_TURNS);
+  return Number(r.lastInsertRowid);
+}
+const setTurnVec = (id, f32) => db.prepare('UPDATE turns SET vec = ? WHERE id = ?').run(Buffer.from(f32.buffer, f32.byteOffset, f32.byteLength), id);
+const recentTurns = (userId, n) => db.prepare('SELECT id, user_text, reply, created_at FROM turns WHERE user_id = ? ORDER BY id DESC LIMIT ?').all(userId, n).reverse();
+const turnsWithVec = (userId) => db.prepare('SELECT id, user_text, reply, created_at, vec FROM turns WHERE user_id = ? AND vec IS NOT NULL').all(userId);
+const countTurns = (userId) => db.prepare('SELECT COUNT(*) AS n FROM turns WHERE user_id = ?').get(userId).n;
+const clearTurns = (userId) => db.prepare('DELETE FROM turns WHERE user_id = ?').run(userId).changes;
+
+module.exports = { addTurn, setTurnVec, recentTurns, turnsWithVec, countTurns, clearTurns, createUser, countUsers, countAdmins, listUsers, getUser, deleteUser, setPassword, checkLogin, verifyUserPassword,
   createSession, sessionUser, deleteSession, loadMoodRow, saveMoodRow, resetMood, validateNewUser };

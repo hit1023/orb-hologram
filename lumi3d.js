@@ -212,7 +212,7 @@ export function createLumi3D({ width = 560, height = 720 } = {}) {
       case 'thinking': return s > 0 ? [-2.3, -s * 0.2] : [0, s * 0.15];
       case 'angry': return [0, s * 0.6];
       case 'sad': return [0, s * 0.34];
-      default: return talk ? [-0.5, s * (0.55 + talk * 0.2) + Math.sin(t * 6 + s) * 0.08] : [0, s * (0.62 + Math.sin(t * 1.7) * 0.03)];
+      default: return talk ? [-0.5, s * (0.55 + talk * 0.2) + Math.sin(t * 6 + s) * 0.08] : [0, s * (0.3 + Math.sin(t * 1.7) * 0.03)];
     }
   };
   // 電柱(怖がって隠れるときに、横からにゅっと出てくる)
@@ -275,12 +275,14 @@ export function createLumi3D({ width = 560, height = 720 } = {}) {
     tails.forEach((piv, i) => { const s = i ? 1 : -1; piv.rotation.z = s * (0.12 + (Math.sin(t * 1.6 + i * 1.5) * 0.1) + p.talk * 0.05); piv.rotation.x = Math.sin(t * 1.3 + i) * 0.06; });
     arms.forEach(({ piv, s }) => {
       const ov = fx.arms && fx.arms[s < 0 ? 'L' : 'R'];                // 指示があれば、その腕はそのとおりに動かす
-      const [rx, rz] = ov || (fx.arms ? [0, s * 0.62] : armPose(p.pose, s, t, p.talk));   // 腕の指示中は、指示のない腕は感情ポーズ(ばんざい等)にせず下ろしておく
+      const [rx, rz] = ov || (fx.arms ? [0, s * 0.3] : armPose(p.pose, s, t, p.talk));   // 腕の指示中は、指示のない腕は感情ポーズ(ばんざい等)にせず下ろしておく
       const k = ov ? 0.3 : 0.18;
       piv.rotation.x = lerp(piv.rotation.x, rx, k); piv.rotation.z = lerp(piv.rotation.z, rz, k);
       // 頭が大きいので、腕をあげるときは肩を外側・手前に出して、頭の陰に隠れないようにする
-      piv.position.x = lerp(piv.position.x, s * (0.46 + (ov ? (ov[2] || 0) : 0.2)), 0.2);
-      piv.position.z = lerp(piv.position.z, ov ? (ov[3] || 0) : 0.22, 0.2);
+      const rest = !ov && Math.abs(rz) < 0.45;                            // 腕を下ろしているときは、肩を胴体の高さまで下げて体に沿わせる
+      piv.position.y = lerp(piv.position.y, rest ? 1.27 : 1.5, 0.2);
+      piv.position.x = lerp(piv.position.x, s * (rest ? 0.5 : 0.46 + ((ov && ov[2]) || 0)), 0.2);
+      piv.position.z = lerp(piv.position.z, ov ? (ov[3] || 0) : (rest ? 0.2 : 0), 0.2);
     });
     const sig = [p.wink || '', p.eye, p.mouth, Math.round(p.open * 12), p.blink > 0.55 ? 1 : 0, Math.round(p.blush * 10), Math.round(p.brow * 8), Math.round(p.raise * 20), p.listening ? 1 : 0, p.tear ? Math.round(p.tear * 20) : 0, p.mouth === 'wavy' ? Math.round(t * 10) : 0].join('|');
     if (sig !== lastSig) { paintFace(fg, p); faceTex.needsUpdate = true; lastSig = sig; }

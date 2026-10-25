@@ -203,6 +203,23 @@ export function createLumi3D({ width = 560, height = 720 } = {}) {
   mesh(new THREE.ConeGeometry(0.035, 0.1, 8), new THREE.MeshBasicMaterial({ color: 0x333333 }), pen, 0, -0.04, 0).rotation.x = Math.PI;
   const penTip = mesh(new THREE.SphereGeometry(0.05, 8, 6), new THREE.MeshBasicMaterial({ color: 0x9dffb0 }), pen, 0, -0.1, 0);
 
+  // 鎧とたて(威圧されたとき): ぱっと身につけて、たてで身を守る。ホログラム板では黒が透明なので、明るい銀と金にする
+  const armor = new THREE.Group(); root.add(armor); armor.visible = false;
+  const steel = new THREE.MeshToonMaterial({ color: 0xd6e6fb, gradientMap: grad, emissive: 0x2a4670, emissiveIntensity: 0.6 });
+  const gold = new THREE.MeshToonMaterial({ color: 0xffd23f, gradientMap: grad, emissive: 0x8a6a10, emissiveIntensity: 0.6 });
+  mesh(new THREE.CylinderGeometry(0.5, 0.66, 0.72, 28), steel, armor, 0, 1.18, 0);                       // むね当て
+  mesh(new THREE.TorusGeometry(0.52, 0.045, 8, 32), gold, armor, 0, 1.54, 0).rotation.x = Math.PI / 2;
+  mesh(new THREE.TorusGeometry(0.66, 0.045, 8, 32), gold, armor, 0, 0.83, 0).rotation.x = Math.PI / 2;
+  for (const sx of [-1, 1]) { const pd = mesh(new THREE.SphereGeometry(0.28, 16, 12), steel, armor, sx * 0.58, 1.58, 0); pd.scale.set(1, 0.75, 1.15); }   // 肩当て
+  const shield = new THREE.Group(); shield.position.set(0, 0.86, 1.0); shield.scale.setScalar(0.86); armor.add(shield);                  // たて
+  mesh(new THREE.CylinderGeometry(0.68, 0.68, 0.1, 40), steel, shield).rotation.x = Math.PI / 2;
+  mesh(new THREE.TorusGeometry(0.68, 0.06, 10, 40), gold, shield);
+  mesh(starGeometry(0.34, 0.17), gold, shield, 0, 0, 0.09);
+  const tiara = new THREE.Group(); tiara.position.set(0, 0.62, 0); head.add(tiara); tiara.visible = false;   // 頭の鎧(ティアラ)
+  mesh(new THREE.TorusGeometry(0.83, 0.05, 8, 40), steel, tiara).rotation.x = Math.PI / 2;
+  mesh(new THREE.ConeGeometry(0.1, 0.34, 4), gold, tiara, 0, 0.14, 0.82);
+  for (const sx of [-1, 1]) { const wg = mesh(new THREE.ConeGeometry(0.09, 0.42, 4), steel, tiara, sx * 0.86, 0.12, 0.1); wg.rotation.z = -sx * 0.9; }
+
   // ハート(投げキス・ハートを出す): ルミの前にふわっと浮かんで消える
   const heartShape = new THREE.Shape();
   heartShape.moveTo(0, -0.3); heartShape.bezierCurveTo(-0.55, 0.05, -0.3, 0.5, 0, 0.22); heartShape.bezierCurveTo(0.3, 0.5, 0.55, 0.05, 0, -0.3);
@@ -317,6 +334,12 @@ export function createLumi3D({ width = 560, height = 720 } = {}) {
       const wr = t * 14;                                                // 書く手の動き(小刻みに左右へ)
       pen.position.set(0.12 + Math.sin(wr) * 0.14, 0.72 + Math.cos(wr * 0.5) * 0.06 - (1 - an) * 0.3, 1.0); pen.rotation.set(-0.5, 0, -0.5);
       pen.scale.setScalar(an); penTip.scale.setScalar(0.7 + Math.abs(Math.sin(wr)) * 0.8);
+    }
+    const gd = fx.guard || 0;                                          // ガード: 鎧とたてが、ぱっと出る
+    armor.visible = tiara.visible = gd > 0.02;
+    if (gd > 0.02) {
+      armor.scale.setScalar(Math.min(1, 0.35 + gd * 0.75)); armor.position.y = (1 - gd) * 0.25;
+      shield.position.set(Math.sin(t * 44) * 0.015 * gd, 0.86, 1.0 + Math.sin(t * 9) * 0.02);            // 攻撃にたえて、かすかにふるえる
     }
     const sig = [p.wink || '', p.eye, p.mouth, Math.round(p.open * 12), p.blink > 0.55 ? 1 : 0, Math.round(p.blush * 10), Math.round(p.brow * 8), Math.round(p.raise * 20), p.listening ? 1 : 0, p.tear ? Math.round(p.tear * 20) : 0, p.mouth === 'wavy' ? Math.round(t * 10) : 0].join('|');
     if (sig !== lastSig) { paintFace(fg, p); faceTex.needsUpdate = true; lastSig = sig; }

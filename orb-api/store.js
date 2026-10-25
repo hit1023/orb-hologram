@@ -38,6 +38,11 @@ db.exec(`
     vec BLOB
   );
   CREATE INDEX IF NOT EXISTS turns_user ON turns (user_id, id);
+  CREATE TABLE IF NOT EXISTS settings (key TEXT PRIMARY KEY, value TEXT NOT NULL);
+  CREATE TABLE IF NOT EXISTS user_env (
+    user_id INTEGER PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
+    lat REAL, lng REAL, weather TEXT, updated_at INTEGER NOT NULL
+  );
   CREATE TABLE IF NOT EXISTS news_told (
     user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
     h TEXT NOT NULL, ts INTEGER NOT NULL,
@@ -145,6 +150,31 @@ function saveMoodRow(userId, m) {
 // ルミの「この人への本音」メモ(LLMが履歴と気分から書く)
 const saveImpression = (userId, text, turns, stance) =>
   db.prepare('UPDATE moods SET impression = ?, impr_turns = ?, impr_stance = ?, impr_at = ? WHERE user_id = ?').run(text, turns, stance, now(), userId);
+// ---- 管理者が決める設定(ルミの動かし方) ----
+const SETTING_DEFAULTS = { topic_enabled: 1, topic_first_sec: 75, topic_interval_sec: 240, weather_enabled: 1, guard_enabled: 1, particle_level: 2 };
+function getSettings() {
+  const out = { ...SETTING_DEFAULTS };
+  for (const r of db.prepare('SELECT key, value FROM settings').all()) if (r.key in out) out[r.key] = Number(r.value);
+  return out;
+}
+function setSettings(patch) {
+  const lim = { topic_enabled: [0, 1], topic_first_sec: [10, 3600], topic_interval_sec: [30, 86400], weather_enabled: [0, 1], guard_enabled: [0, 1], particle_level: [1, 3] };
+  for (const [k, v] of Object.entries(patch || {})) {
+    if (!(k in lim)) continue; const n = Math.round(Number(v)); if (!Number.isFinite(n)) continue;
+    db.prepare('INSERT INTO settings (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value').run(k, String(Math.max(lim[k][0], Math.min(lim[k][1], n))));
+  }
+  return getSettings();
+}
+// ---- ユーザーの場所と天気(場所は小数2桁=約1kmに丸めて保存) ----
+const saveEnv = (userId, lat, lng, weather) => db.prepare(`INSERT INTO user_env (user_id, lat, lng, weather, updated_at) VALUES (?, ?, ?, ?, ?)
+  ON CONFLICT(user_id) DO UPDATE SET lat = excluded.lat, lng = excluded.lng, weather = excluded.weather, updated_at = excluded.updated_at`).run(userId, lat, lng, JSON.stringify(weather), now());
+function getEnv(userId) {
+  const r = db.prepare('SELECT lat, lng, weather, updated_at FROM user_env WHERE user_id = ?').get(userId);
+  if (!r) return null; let w = null; try { w = JSON.parse(r.weather); } catch (_) {}
+  return w ? { lat: r.lat, lng: r.lng, weather: w, updated_at: r.updated_at } : null;
+}
+const clearEnv = (userId) => db.prepare('DELETE FROM user_env WHERE user_id = ?').run(userId);
+
 // 興味のあるキーワード(会話の履歴からLLMが拾う)と、もう話したニュース
 const saveInterests = (userId, list, turns) => db.prepare('UPDATE moods SET interests = ?, int_turns = ? WHERE user_id = ?').run(JSON.stringify(list), turns, userId);
 function getInterests(userId) {
@@ -174,5 +204,5 @@ const turnStats = (userId) => db.prepare('SELECT COUNT(*) AS n, MIN(created_at) 
 const countTurns = (userId) => db.prepare('SELECT COUNT(*) AS n FROM turns WHERE user_id = ?').get(userId).n;
 const clearTurns = (userId) => db.prepare('DELETE FROM turns WHERE user_id = ?').run(userId).changes;
 
-module.exports = { saveInterests, getInterests, toldNews, markNewsTold, turnStats, addTurn, setTurnVec, recentTurns, turnsWithVec, countTurns, clearTurns, createUser, countUsers, countAdmins, listUsers, getUser, deleteUser, setPassword, checkLogin, verifyUserPassword,
+module.exports = { getSettings, setSettings, saveEnv, getEnv, clearEnv, saveInterests, getInterests, toldNews, markNewsTold, turnStats, addTurn, setTurnVec, recentTurns, turnsWithVec, countTurns, clearTurns, createUser, countUsers, countAdmins, listUsers, getUser, deleteUser, setPassword, checkLogin, verifyUserPassword,
   createSession, sessionUser, deleteSession, loadMoodRow, saveMoodRow, saveImpression, resetMood, validateNewUser };

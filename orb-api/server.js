@@ -11,6 +11,7 @@ const store = require('./store');
 const moodLib = require('./mood');
 const memory = require('./memory');
 const news = require('./news');
+const weather = require('./weather');
 
 const PORT = +process.env.PORT || 3000;
 const MODEL = process.env.CLAUDE_MODEL || 'haiku';
@@ -161,6 +162,7 @@ async function extractInterests(user, force = false) {
   try {
     const texts = store.recentTurns(user.id, 20).map(t => t.user_text).filter(t => !t.startsWith('（ルミから話題）')).join('\n');
     const out = await cfText('会話の履歴から、この人が興味を持っていること(好きなもの・趣味・仕事・よく話す話題)を、ニュース検索に使えるキーワードで最大3つ選ぶ。1語か2語の名詞で、固有名詞・具体的な言葉を優先する。挨拶・「ありがとう」・動きの命令(手をあげて等)・ルミへの質問は除く。出力はJSON配列だけ。例: [\"カレー\",\"Cloudflare\",\"猫\"]。該当なしなら []。', texts, 120);
+    console.log(`[interest] raw ${user.username}: ${String(out).slice(0, 120)}`);
     const m = out && out.match(/\[[\s\S]*?\]/);
     if (m) {
       const list = JSON.parse(m[0]).filter(x => typeof x === 'string' && x.trim().length >= 2 && x.length <= 20).map(x => x.trim()).slice(0, 3);
@@ -212,7 +214,8 @@ function jevQuestions() {
   q.manner = { type: 'choice', instructions: 'ユーザーの話しかけ方は、キャラクターに対してどんな態度か', criteria: {
     neutral: 'ふつうの会話・質問・あいさつ', kind: '丁寧でやさしい・お願いする・気づかう・やわらかい言い方',
     thanks: '感謝している・ほめている・好意を伝えている', commanding: 'ぶっきらぼうな命令・指示。お願いや敬語がない(例:手をあげて、回れ、答えろ)',
-    rude: '暴言・侮辱・悪口・きつい言い方で攻撃している' } };
+    rude: '暴言・侮辱・悪口・きつい言い方で攻撃している',
+    intimidating: '威圧・脅し・怒鳴りつけ・高圧的に責め立てる・脅迫する(例:ふざけるな、黙れ、なめるな、ただじゃおかない、何様のつもりだ)' } };
   q.topic = { type: 'choice', instructions: 'ユーザーは、どんな出来事を話しているか', criteria: {
     none: '特に出来事の話ではない', happy: 'うれしい・楽しい出来事を話している', sad: '悲しい・つらい・落ち込んだ出来事を話している' } };
   q.intent = { type: 'choice', instructions: 'ユーザーはキャラクターに、何を求めているか', criteria: {
@@ -242,7 +245,7 @@ async function jevAct(text) {
     if (r && ACTIONS.includes(r.c) && Date.now() - lastSpont > 15000 && (r.p >= 0.85 || Math.random() < 0.6)) { acts.push(r.c); spontaneous = true; lastSpont = Date.now(); }
   }
   const mp = pick('manner', 0.5), tp = pick('topic', 0.5), ip = pick('intent', 0.6);
-  const manner = mp && (mp.c !== 'rude' || mp.p >= 0.6) ? mp.c : 'neutral';
+  const manner = mp && (!['rude', 'intimidating'].includes(mp.c) || mp.p >= 0.6) ? mp.c : 'neutral';
   return { actions: acts, spontaneous, manner, topic: tp ? tp.c : 'none', askFeeling: !!(ip && ip.c === 'ask_feeling') };
 }
 
@@ -263,8 +266,9 @@ function userTurn(user, text) {
     const before = moodLib.decayed(store.loadMoodRow(user.id));
     const after = moodLib.apply(before, an);
     store.saveMoodRow(user.id, after);
+    const attacked = store.getSettings().guard_enabled === 1 && ['rude', 'intimidating'].includes(an.manner);   // 言葉で攻撃された(威圧・暴言)と感じた → 鎧でガード
     const refused = !an.spontaneous && an.actions.some(a => !ALWAYS_OK.includes(a)) && moodLib.shouldRefuse(after);
-    return { ...an, source, refused, actions: refused ? ['sulk'] : an.actions, mood: { ...moodLib.round(after), stance: moodLib.stance(after) }, moodLabel: moodLib.label(after), stance: moodLib.stance(after), raw: after };
+    return { ...an, source, refused, attacked, actions: refused ? ['sulk'] : an.actions, mood: { ...moodLib.round(after), stance: moodLib.stance(after) }, moodLabel: moodLib.label(after), stance: moodLib.stance(after), raw: after };
   })();
   turnCache.set(key, { at: Date.now(), promise });
   if (turnCache.size > 200) for (const [k, v] of turnCache) if (Date.now() - v.at > 20000) turnCache.delete(k);
@@ -352,7 +356,7 @@ http.createServer(async (req, res) => {
       const s = store.createSession(u.id);
       setCookie(res, req, s.token, s.maxAge);
       console.log(`[auth] login ${u.username}`);
-      return send(res, 200, { user: userView(u), mood: moodView(u.id) });
+      return send(res, 200, { user: userView(u), mood: moodView(u.id), settings: store.getSettings() });
     }
     if (req.method === 'POST' && url === '/api/auth/logout') {
       store.deleteSession(cookieOf(req)); setCookie(res, req, '', 0); return send(res, 200, { ok: true });
@@ -362,7 +366,7 @@ http.createServer(async (req, res) => {
     }
     if (req.method === 'GET' && url === '/api/auth/me') {
       const u = currentUser(req); if (!u) return send(res, 401, { error: 'login required' });
-      return send(res, 200, { user: userView(u), mood: moodView(u.id) });
+      return send(res, 200, { user: userView(u), mood: moodView(u.id), settings: store.getSettings() });
     }
     if (req.method === 'POST' && url === '/api/auth/password') {
       const u = currentUser(req); if (!u) return send(res, 401, { error: 'login required' });
@@ -378,11 +382,23 @@ http.createServer(async (req, res) => {
       return send(res, 200, { ok: true, deleted: memory.forget(u.id) });
     }
 
+    if (req.method === 'POST' && url === '/api/location') {           // 位置情報(約1kmに丸める)から、天気と気温を取る
+      const u = currentUser(req); if (!u) return send(res, 401, { error: 'login required' });
+      if (!store.getSettings().weather_enabled) return send(res, 200, { disabled: true });
+      const { lat, lng } = await readJson(req);
+      if (!Number.isFinite(lat) || !Number.isFinite(lng) || Math.abs(lat) > 90 || Math.abs(lng) > 180) return send(res, 400, { error: 'bad location' });
+      const w = await weather.fetchWeather(lat, lng);
+      store.saveEnv(u.id, w.lat, w.lng, w);
+      return send(res, 200, { weather: w });
+    }
+
     // ---- ユーザー管理(管理者のみ) ----
     if (url.startsWith('/api/admin/')) {
       const me = currentUser(req);
       if (!me) return send(res, 401, { error: 'login required' });
       if (me.role !== 'admin') return send(res, 403, { error: '管理者だけが使えます' });
+      if (req.method === 'GET' && url === '/api/admin/settings') return send(res, 200, { settings: store.getSettings() });
+      if (req.method === 'POST' && url === '/api/admin/settings') { const b = await readJson(req); console.log(`[admin] ${me.username} が設定を変更 ${JSON.stringify(b)}`); return send(res, 200, { settings: store.setSettings(b) }); }
       if (req.method === 'GET' && url === '/api/admin/users')
         return send(res, 200, { users: store.listUsers().map(u => ({ ...u, mood: moodView(u.id), turns: store.countTurns(u.id) })) });
       if (req.method === 'POST' && url === '/api/admin/users') {
@@ -417,15 +433,16 @@ http.createServer(async (req, res) => {
     }
 
     if (req.method === 'POST' && url === '/api/topic') {                  // ルミから話題を出す: その人の興味に合うニュースを1つ選んで、自分から話しかける
-      const t0 = Date.now();
+      const st = store.getSettings(); if (!st.topic_enabled) return send(res, 200, { none: true, disabled: true });
+      const t0 = Date.now(), env = st.weather_enabled ? store.getEnv(user.id) : null, useWeather = !!env && Date.now() - env.updated_at < 3 * 3600 * 1000 && Math.random() < 0.4;
       let ints = store.getInterests(user.id);
       if (!ints.list.length) { await Promise.race([extractInterests(user, true), new Promise(r => setTimeout(r, 3500))]); ints = store.getInterests(user.id); }
-      const n = await news.pickNews(user.id, ints.list);
+      const n = useWeather ? { title: `今日の天気は${env.weather.desc}、気温${env.weather.temp}℃`, source: '天気', keyword: '天気' } : await news.pickNews(user.id, ints.list);
       if (!n) return send(res, 200, { none: true });
       const m = moodLib.decayed(store.loadMoodRow(user.id));
-      const system = SYSTEM + `\n\n話し相手のユーザー名は「${user.username}」。` + moodLib.guide(m, false, (store.loadMoodRow(user.id) || {}).impression);
+      const system = SYSTEM + `\n\n話し相手のユーザー名は「${user.username}」。` + moodLib.guide(m, false, (store.loadMoodRow(user.id) || {}).impression) + (env ? weather.block(env) : '');
       const stored = store.recentTurns(user.id, 6).flatMap(t => [{ role: 'user', text: t.user_text }, { role: 'ai', text: t.reply }]);
-      const prompt = `(相手はいま話しかけていない。ルミのほうから、ニュースの話題を切り出す。)\n見出し: 「${n.title}」${n.source ? `(${n.source})` : ''}${n.keyword ? `\n相手が興味を持っていそうなこと: ${n.keyword}` : ''}\n` +
+      const prompt = useWeather ? `(相手はいま話しかけていない。ルミのほうから、相手のいる場所の天気の話題を切り出す。)\n天気: ${env.weather.desc}、気温${env.weather.temp}℃(体感${env.weather.feels}℃)${env.weather.rainProb != null ? `、雨の確率${env.weather.rainProb}%` : ''}\nこの天気と気温に合った声かけ(傘・服装・飲み物・過ごし方など)を、ルミの口調で1〜3文で話しかける。地名は言わない。最後に相手のようすを軽く聞く。actionsは[]。` : `(相手はいま話しかけていない。ルミのほうから、ニュースの話題を切り出す。)\n見出し: 「${n.title}」${n.source ? `(${n.source})` : ''}${n.keyword ? `\n相手が興味を持っていそうなこと: ${n.keyword}` : ''}\n` +
         '見出しだけを根拠に、「そういえばこんなニュースがあったよ」と、ルミの口調で1〜3文で話しかける。見出しにない事実は作らない。断定せず「〜らしいよ」と伝える。最後に相手の意見や経験を軽く聞く。actionsは[]。';
       let raw; try { raw = await runCloudflare(prompt, stored, system); } catch (e) { raw = await runClaude(buildPrompt(prompt, stored), system); }
       const out = parseReply(raw); out.actions = [];
@@ -443,7 +460,7 @@ http.createServer(async (req, res) => {
       const [turn, qvec] = await Promise.all([userTurn(user, text.slice(0, 300)), memory.embedQuery(text.slice(0, 300))]);
       const mems = memory.recall(user.id, qvec);
       if (turn.askFeeling) await Promise.race([analyzeFeelings(user, turn.raw, true), new Promise(r => setTimeout(r, 3500))]);   // 聞かれたときは、最新の本音を作ってから答える
-      const system = SYSTEM + `\n\n話し相手のユーザー名は「${user.username}」。` + moodLib.guide(turn.raw, turn.refused, (store.loadMoodRow(user.id) || {}).impression) + memory.block(mems) + (turn.askFeeling ? feelingBlock(user, turn.raw) : '');
+      const system = SYSTEM + `\n\n話し相手のユーザー名は「${user.username}」。` + moodLib.guide(turn.raw, turn.refused, (store.loadMoodRow(user.id) || {}).impression, turn.attacked) + (store.getSettings().weather_enabled ? weather.block(store.getEnv(user.id)) : '') + memory.block(mems) + (turn.askFeeling ? feelingBlock(user, turn.raw) : '');
       const stored = store.recentTurns(user.id, 8).flatMap(t => [{ role: 'user', text: t.user_text }, { role: 'ai', text: t.reply }]);
       const hist = stored.length ? stored : history;                  // 会話履歴はサーバーに保存したものを使う(ページを開き直しても続く)
       let raw, via = 'cf';
@@ -458,7 +475,7 @@ http.createServer(async (req, res) => {
       if (turn.refused) out.actions = ['sulk'];
       if (turn.raw.anger >= 60 && ['neutral', 'happy'].includes(out.emotion)) out.emotion = 'angry';
       else if (turn.raw.sadness >= 60 && ['neutral', 'happy'].includes(out.emotion)) out.emotion = 'sad';
-      out.mood = turn.mood; out.moodLabel = turn.moodLabel; out.stance = turn.stance;
+      out.mood = turn.mood; out.moodLabel = turn.moodLabel; out.stance = turn.stance; out.attacked = !!turn.attacked;
       out.memories = mems.map(m => m.user_text.replace(/\s+/g, ' ').slice(0, 16));   // 思い出した言葉(画面で泡にする)
       memory.remember(user.id, text.slice(0, 300), out.reply, out.emotion);   // 履歴に保存して、あとから思い出せるようにする
       analyzeFeelings(user, turn.raw).catch(() => {});
@@ -472,7 +489,7 @@ http.createServer(async (req, res) => {
       const t0 = Date.now();
       const t = await userTurn(user, text.slice(0, 300));
       console.log(`[act] ${user.username} ${Date.now() - t0}ms [${t.actions}]${t.spontaneous ? ' (自然な反応)' : ''}${t.refused ? ' (ことわった)' : ''} ${t.manner}/${t.topic} mood=${t.mood.joy}/${t.mood.anger}/${t.mood.sadness}`);
-      return send(res, 200, { actions: t.actions, spontaneous: t.spontaneous, refused: t.refused, askFeeling: !!t.askFeeling, source: t.source, manner: t.manner, mood: t.mood, moodLabel: t.moodLabel, stance: t.stance });
+      return send(res, 200, { actions: t.actions, spontaneous: t.spontaneous, refused: t.refused, askFeeling: !!t.askFeeling, attacked: !!t.attacked, source: t.source, manner: t.manner, mood: t.mood, moodLabel: t.moodLabel, stance: t.stance });
     }
     if (req.method === 'POST' && url === '/api/tts') {
       const { text, emotion } = await readJson(req);

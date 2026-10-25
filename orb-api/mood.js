@@ -29,6 +29,7 @@ function apply(m, { manner, topic }) {
     case 'kind': o.joy += 6; o.anger -= 6; o.affinity += 1.5; o.streak = 0; break;
     case 'thanks': o.joy += 10; o.anger -= 9; o.sadness -= 4; o.affinity += 3; o.streak = 0; break;
     case 'commanding': o.streak = (m.streak || 0) + 1; o.anger += 6 + Math.min(o.streak, 5) * 2; o.joy -= 4; o.affinity -= o.streak >= 3 ? 2 : 0.7; break;   // 命令がつづくほど、いらいらが増える
+    case 'intimidating': o.streak = (m.streak || 0) + 1; o.anger += 8; o.sadness += 14; o.joy -= 12; o.affinity -= 4; break;   // 威圧(怒鳴る・脅す): こわくて、かなしい
     case 'rude': o.streak = (m.streak || 0) + 1; o.anger += 22; o.sadness += 10; o.joy -= 10; o.affinity -= 5; break;
     default: o.streak = 0; o.anger -= 2; o.affinity += 0.3;   // ふつうに話してくれるだけでも、少しずつ仲良くなる
   }
@@ -74,7 +75,7 @@ const STANCE_GUIDE = {
 };
 
 // 気分と態度に合わせて、ルミの話し方を変えるための指示(システムプロンプトの末尾に足す)
-function guide(m, refusing, impression) {
+function guide(m, refusing, impression, attacked) {
   const r = round(m), st = stance(m);
   const lines = [`\n\n【いまのルミの気持ち】よろこび${r.joy}/100、いかり${r.anger}/100、かなしみ${r.sadness}/100、この相手への好感度${r.affinity}/100。この気持ちが、返事の言い方や気持ちにはっきり出るようにする。上の「ルール」にある丁寧語・かわいい口調・聞き返しよりも、この気持ちと態度を優先する。`];
   if (impression) lines.push(`ルミの本音(この相手へのいまの気持ち): ${impression}`);
@@ -85,6 +86,7 @@ function guide(m, refusing, impression) {
   if (m.sadness >= 60) lines.push('かなしくて、しょんぼりしている。声が小さく、ゆっくりで元気がない。emotionはsad。');
   else if (m.sadness >= 35) lines.push('少しさみしい気分。元気がなく、しんみりした言い方になる。');
   if (m.joy >= 80 && m.anger < 30) lines.push('とてもごきげん。テンション高めで、うれしさがあふれている。emotionはhappy。');
+  if (attacked) lines.push('いま、相手に威圧された(怒鳴られた・脅された)と感じている。こわくて、鎧を着て身を守っている。おびえつつ、必要なら気丈に言い返してもよい。');
   if (refusing) lines.push('今回は、頼まれた動きをやりたくない。replyは、むっとして断る短い一言(例:「やだ！いま怒ってるもん」「むーっ、やらない」「なんであんたの言うこと聞かなきゃいけないの」)にして、actionsは["sulk"]だけにする。');
   if (['hostile', 'tsundere', 'irritated', 'cold'].includes(st))
     lines.push('【言ってはいけないこと】毒づいてよいのは、相手の「いまの言動」への軽い悪態まで。人種・性別・国籍・外見・体型・病気・障害・家族への侮辱、脅し、暴力や自傷をあおる言葉、性的な言葉は、どんなに怒っていても絶対に使わない。');
@@ -94,6 +96,7 @@ function guide(m, refusing, impression) {
 // Jevが使えないときの簡易判定
 const ASK_FEELING_RX = /((俺|おれ|私|わたし|あたし|僕|ぼく|うち|自分)(の|って|は|のこと).{0,8}(イメージ|印象|評価|どう思|どんな(人|やつ|奴|ひと)|好き|嫌い|きらい)|(イメージ|印象|評価)(は|って|を?教えて|どう|を聞かせて)|(今|いま).{0,6}(どんな)?(気持ち|気分|機嫌)|(ルミ|きみ|君|あなた|お前|おまえ).{0,6}(どう思って|どんな気持ち|何を思って|私.{0,4}好き|俺.{0,4}好き)|(俺|私|僕|ぼく|わたし)のこと.{0,6}(好き|嫌い|どう))/;
 const RX = {
+  intimidating: /(ふざけるな|なめるな|なめてる|殺す|ぶっ殺|ぶっ飛ばす|ぶん殴|しばくぞ|いい加減にしろ|黙れ|覚えてろ|ただじゃ|許さない|許さねえ|痛い目|どうなっても知らな|消えろ|うせろ|何様)/,
   rude: /(バカ|馬鹿|アホ|ばか|あほ|うるさい|黙れ|だまれ|死ね|クソ|くそ|ブス|きもい|キモい|消えろ|使えない|役立たず|ポンコツ)/,
   thanks: /(ありがとう|ありがと|助かった|さすが|えらい|偉い|かわいい|可愛い|すごい|大好き|好きだよ|最高)/,
   kind: /(お願い|おねがい|ください|下さい|してね|してくれる|してほしいな|いいかな|よかったら|ちょっと.{0,6}(だけ|かな))/,
@@ -103,7 +106,7 @@ const RX = {
 };
 function heuristic(text) {
   const t = String(text || '');
-  const manner = RX.rude.test(t) ? 'rude' : RX.thanks.test(t) ? 'thanks' : RX.kind.test(t) ? 'kind' : RX.commanding.test(t) ? 'commanding' : 'neutral';
+  const manner = RX.intimidating.test(t) ? 'intimidating' : RX.rude.test(t) ? 'rude' : RX.thanks.test(t) ? 'thanks' : RX.kind.test(t) ? 'kind' : RX.commanding.test(t) ? 'commanding' : 'neutral';
   const topic = RX.sad.test(t) ? 'sad' : RX.happy.test(t) ? 'happy' : 'none';
   return { manner, topic, askFeeling: ASK_FEELING_RX.test(t) };
 }

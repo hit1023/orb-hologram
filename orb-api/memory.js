@@ -84,6 +84,6 @@ function remember(userId, userText, reply, emotion) {
   }).catch(e => console.log(`[memory] embed failed: ${e.message}`));
   return id;
 }
-const forget = (userId) => { cache.delete(userId); return store.clearTurns(userId); };
+const forget = (userId) => { cache.delete(userId); try { store.clearEnv(userId); } catch (_) {} return store.clearTurns(userId); };
 
 module.exports = { enabled, embedQuery, recall, block, remember, forget };

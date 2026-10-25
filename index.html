@@ -78,6 +78,8 @@
       <span class="mb">😢<i><b id="mbS" style="background:#5af"></b></i></span>
       <span class="mb">💗<i><b id="mbF" style="background:#f8a"></b></i></span>
     </span>
+    <span id="wx" title=""></span>
+    <button id="geoBtn" class="sm" title="位置情報から、いまの天気と気温をルミが知る(約1kmに丸めて使います)">位置: ON</button>
     <button id="adminBtn" class="sm" style="display:none">管理</button>
     <button id="pwBtn" class="sm">パスワード変更</button>
     <button id="forgetBtn" class="sm" title="ルミが覚えている、あなたとの会話を全部消す">記憶を消す</button>
@@ -105,6 +107,15 @@
 <div id="admin" class="overlay" hidden>
   <div class="card wide">
     <div class="row" style="justify-content:space-between"><h1>ユーザー管理</h1><button id="admClose" class="sm">閉じる</button></div>
+    <div class="card" style="width:100%;padding:12px;gap:8px;background:#06101a;margin-bottom:6px">
+      <div style="font-weight:600;color:#def">ルミの設定</div>
+      <label><input type="checkbox" id="sTopic"> ルミから話題を出す(ニュース・天気)</label>
+      <div class="row"><label>最初の話題まで <input id="sFirst" type="number" min="10" max="3600" style="width:84px"> 秒</label><label>話題の間隔 <input id="sInt" type="number" min="30" max="86400" style="width:96px"> 秒</label></div>
+      <label><input type="checkbox" id="sWeather"> 位置情報から天気・気温を把握する</label>
+      <label><input type="checkbox" id="sGuard"> 威圧されたら鎧でガードする</label>
+      <label>パーティクル量 <select id="sPart"><option value="1">少</option><option value="2">ふつう</option><option value="3">多</option></select></label>
+      <div class="row"><button id="sSave" class="primary sm" type="button">設定を保存</button><span id="sMsg" class="err ok"></span></div>
+    </div>
     <form id="addForm" class="row">
       <input id="adUser" placeholder="ユーザー名(英数字 3〜32)" autocapitalize="none" autocomplete="off" spellcheck="false" required>
       <input id="adPass" type="password" placeholder="パスワード(8文字以上)" autocomplete="new-password" autocapitalize="none" spellcheck="false" required>
@@ -708,11 +719,11 @@ function drawMascot(R, time) {
 const ACT_DUR = { raise_right: 4, raise_left: 4, raise_both: 4, wave: 3, clap: 3, spin: 1.8, jump: 1.6, close_eyes: 4, open_eyes: 0.4,
   cry: 4.5, laugh: 3.5, angry: 3.5, shy: 3.5, bow: 1.8, nod: 1.8, shake_head: 1.8, dance: 5, sleep: 6.5,
   wink_left: 1.6, wink_right: 1.6, peace: 3, kiss: 2.6, heart: 3.5, shiver: 3.5, sit: 4, stretch: 3.5, yawn: 3.5, point: 2.5, shrug: 2.5, sulk: 3.5,
-  surprise: 2, think: 3.5, sway: 5, march: 4, banzai: 2.5, faint: 3.6, tilt_head: 2.5, look_around: 3.5, flap: 3.5, sparkle: 3, guts: 3, cheer: 3.5, hop: 3.5, lower: 0.1, scared: 6, analyze: 4.5 };
+  surprise: 2, think: 3.5, sway: 5, march: 4, banzai: 2.5, faint: 3.6, tilt_head: 2.5, look_around: 3.5, flap: 3.5, sparkle: 3, guts: 3, cheer: 3.5, hop: 3.5, lower: 0.1, scared: 6, analyze: 4.5, guard: 4.2 };
 // 動きごとに出るパーティクル(1秒あたりの数)
 const PT_EMIT = { banzai: { confetti: 30 }, cheer: { confetti: 32, star: 14 }, guts: { star: 26, confetti: 10 }, dance: { note: 12, star: 16 }, spin: { star: 44 }, laugh: { star: 22, note: 4 },
   cry: { drop: 24 }, shy: { heart: 6 }, sparkle: { star: 46 }, kiss: { heart: 9 }, heart: { heart: 12 }, jump: { star: 34 }, hop: { star: 16 }, sleep: { zzz: 2.2 }, angry: { steam: 22 }, sulk: { steam: 8 },
-  scared: { drop: 10 }, shiver: { drop: 8 }, faint: { star: 16 }, wave: { star: 10 }, clap: { star: 20 }, peace: { star: 18 }, analyze: { sym: 20, dot: 18 } };
+  scared: { drop: 10 }, shiver: { drop: 8 }, faint: { star: 16 }, wave: { star: 10 }, clap: { star: 20 }, peace: { star: 18 }, analyze: { sym: 20, dot: 18 }, guard: { hex: 30, spark: 16 } };
 let actQueue = [], actCur = null, curFx = null, actFrame = -1;
 function playActions(list) {
   list = Array.isArray(list) ? list : [];
@@ -725,6 +736,8 @@ function actPose(n, u, d) {
   switch (n) {
     case 'analyze': { const r = u < 0.45 ? easeIO(u / 0.45) : u > d - 0.45 ? easeIO(Math.max(0, (d - u) / 0.45)) : 1; f.analyze = r; f.pitch = 0.2 * r + s(u * 1.3) * 0.04; f.emo = 'neutral';
       f.arms = { L: [-1.3, 0.55], R: [-1.15 + s(u * 14) * 0.1, -0.5] }; break; }       // めがね+メモ帳: 科学者みたいに、うつむいてさらさら書く
+    case 'guard': { const r = u < 0.25 ? easeIO(u / 0.25) : u > d - 0.6 ? easeIO(Math.max(0, (d - u) / 0.6)) : 1; f.guard = r; f.emo = u < 0.5 ? 'surprised' : 'angry';
+      f.arms = { L: [-1.45, 0.5], R: [-1.45, -0.5] }; f.pitch = 0.08 * r; f.shakeX = Math.sin(u * 45) * 0.025 * r; f.squash = 0.05 * r; break; }   // 威圧されたら、鎧とたてで身を守る
     case 'raise_right': f.arms = { L: [0, -2.75, 0.7, 0.3] }; break;                      // ルミの右手(向かい合うので画面の左側)
     case 'raise_left': f.arms = { R: [0, 2.75, 0.7, 0.3] }; break;                        // ルミの左手(画面の右側)
     case 'raise_both': f.arms = { L: [0, -2.75, 0.7, 0.3], R: [0, 2.75, 0.7, 0.3] }; f.emo = 'happy'; break;
@@ -810,6 +823,7 @@ const FAST_ACTIONS = [
 ];
 // 「俺のイメージは?」「いまどんな気持ち?」: ルミ自身の気持ちを聞かれたとき(サーバーの判定と同じ)。めがねをかけて分析する
 const ASK_FEELING_RX = /((俺|おれ|私|わたし|あたし|僕|ぼく|うち|自分)(の|って|は|のこと).{0,8}(イメージ|印象|評価|どう思|どんな(人|やつ|奴|ひと)|好き|嫌い|きらい)|(イメージ|印象|評価)(は|って|を?教えて|どう|を聞かせて)|(今|いま).{0,6}(どんな)?(気持ち|気分|機嫌)|(ルミ|きみ|君|あなた|お前|おまえ).{0,6}(どう思って|どんな気持ち|何を思って|私.{0,4}好き|俺.{0,4}好き)|(俺|私|僕|ぼく|わたし)のこと.{0,6}(好き|嫌い|どう))/;
+const ATTACK_RX = /(ふざけるな|なめるな|なめてる|殺す|ぶっ殺|ぶっ飛ばす|ぶん殴|しばくぞ|いい加減にしろ|黙れ|覚えてろ|ただじゃ|許さない|許さねえ|痛い目|消えろ|うせろ|何様)/;   // 威圧されたと感じる言葉(すぐ身構える。くわしい判定はサーバー)
 let fastPlayed = '', actDecided = false;
 function fastActions(text) {
   if (/(ないで|なくて|やめて|しないで|するな|じゃなくて)/.test(text)) return [];            // 否定・取り消しはAIに任せる
@@ -823,14 +837,14 @@ function fastActions(text) {
 let spin3 = 0, lastT3 = 0, forceSpin = null;   // forceSpin: 確認用(?spin=角度)
 /* ===== パーティクル: 気分と動きで出し分ける(ホログラム板では黒が透明なので、明るい色で) =====
    よろこび=紙ふぶき・きらきら / いかり=赤い湯気と💢 / かなしみ=青いしずく / 好感度が高い=ハート / 話すと音符 / 動きごとの噴き出し */
-const PT = [], PT_MAX = 560, ptAcc = {}; let ptLast = 0;
+const PT = [], ptAcc = {}; let ptLast = 0, PT_MAX = 560, PT_RATE = 1;   // パーティクルの量は、管理メニューの「パーティクル量」で変わる
 const PT_SYMS = ['∑', 'π', '√', '∫', '%', '=', '+', '×', '0', '1', '?', '!', '≈', '∞', 'Δ', 'θ', '2', '7'];
 const rnd = (a, b) => a + Math.random() * (b - a);
 function ptSpawn(kind, o) { if (PT.length < PT_MAX) PT.push(Object.assign({ kind, x: 0, y: 0, vx: 0, vy: 0, g: 0, age: 0, life: 2, size: 0.06, grow: 0, rot: 0, vr: 0, h: 50, s: 90, l: 80, front: false, ch: '' }, o)); }
 function ptRate(key, rate, dt, fn) { const a = (ptAcc[key] || 0) + rate * dt; let n = Math.floor(a); ptAcc[key] = a - n; while (n-- > 0) fn(); }
 const ptPick = (arr) => arr[Math.floor(Math.random() * arr.length)];
 function ptEmitAll(dt, hue, fx, lv, speaking) {
-  const m = mood;
+  const m = mood; dt *= PT_RATE;
   ptRate('amb', 18 + m.joy * 0.16, dt, () => { const a = rnd(0, 6.283), r = rnd(1.1, 2.5); ptSpawn('star', { x: Math.cos(a) * r, y: Math.sin(a) * r * 0.95 - 0.1, vx: rnd(-0.05, 0.05), vy: -rnd(0.04, 0.22), life: rnd(2.2, 4.2), size: rnd(0.03, 0.1), h: hue + rnd(-35, 35), s: 90, l: 86, rot: rnd(0, 6) }); });
   ptRate('dust', 14, dt, () => ptSpawn('dot', { x: rnd(-2.3, 2.3), y: rnd(-1.9, 1.9), vy: -rnd(0.04, 0.2), life: rnd(2, 4.5), size: rnd(0.012, 0.032), h: hue, s: 60, l: 92 }));
   if (m.joy >= 62) ptRate('conf', (m.joy - 60) * 0.55, dt, () => ptSpawn('confetti', { x: rnd(-2, 2), y: -2.3, vx: rnd(-0.15, 0.15), vy: rnd(0.25, 0.6), life: rnd(3, 5), size: rnd(0.05, 0.1), h: rnd(0, 360), s: 95, l: 65, rot: rnd(0, 6), vr: rnd(-6, 6) }));
@@ -857,6 +871,8 @@ function ptEmitAll(dt, hue, fx, lv, speaking) {
   if (e.zzz) ptRate('e_zzz', e.zzz, dt, () => ptSpawn('text', { x: 0.8, y: -0.7, vx: 0.18, vy: -0.28, life: 2.6, size: 0.15, grow: 0.06, h: 215, s: 90, l: 82, ch: ptPick(['Z', 'z', 'Z']), front: true }));
   if (e.steam) ptRate('e_steam', e.steam, dt, () => { const sd = Math.random() < 0.5 ? -1 : 1; ptSpawn('steam', { x: sd * 0.75, y: -0.85, vx: sd * rnd(0.1, 0.3), vy: -rnd(0.3, 0.6), life: rnd(1, 1.8), size: 0.07, grow: 0.12, h: rnd(0, 18), s: 95, l: 58, front: true }); });
   if (e.sym) ptRate('e_sym', e.sym, dt, () => ptSpawn('text', { orb: 1, ang: rnd(0, 6.283), rad: rnd(0.95, 1.5), dr: rnd(0.04, 0.12), w: rnd(0.7, 1.4) * (Math.random() < 0.5 ? -1 : 1), cx: 0, cy: -0.3, life: rnd(2, 3.2), size: rnd(0.12, 0.2), h: rnd(95, 175), s: 95, l: 70, ch: ptPick(PT_SYMS), front: true }));
+  if (e.hex) ptRate('e_hex', e.hex, dt, () => { const a = rnd(0, 6.283), r = rnd(0.5, 1.5); ptSpawn('hex', { x: Math.cos(a) * r * 1.0, y: Math.sin(a) * r * 1.1 + 0.2, vy: -rnd(0, 0.15), life: rnd(0.7, 1.4), size: rnd(0.08, 0.2), rot: rnd(0, 1), vr: rnd(-1.5, 1.5), h: 190 + rnd(-15, 15), s: 100, l: 78, front: true }); });
+  if (e.spark) ptRate('e_spark', e.spark, dt, () => ptSpawn('star', { x: rnd(-0.9, 0.9), y: rnd(0.3, 1.2), vx: rnd(-1, 1), vy: -rnd(0.2, 0.9), g: 1.4, life: rnd(0.3, 0.7), size: rnd(0.04, 0.1), h: 50, s: 100, l: 92, rot: rnd(0, 6), front: true }));
   if (e.dot) ptRate('e_dot', e.dot, dt, () => ptSpawn('dot', { x: rnd(-0.2, 0.3), y: rnd(0.35, 0.65), vx: rnd(-0.3, 0.3), vy: -rnd(0.2, 0.6), life: rnd(0.5, 1), size: rnd(0.02, 0.045), h: rnd(120, 180), s: 100, l: 75, front: true }));
 }
 function ptStep(dt) {
@@ -878,6 +894,7 @@ function ptDraw(front) {                              // キャラの空間(R単
     switch (p.kind) {
       case 'star': mcSparkle(p.x, p.y, sz * (0.65 + 0.35 * Math.sin(p.age * 9 + p.rot))); break;
       case 'dot': case 'steam': ctx.beginPath(); ctx.arc(p.x, p.y, sz, 0, 6.283); ctx.fill(); break;
+      case 'hex': ctx.save(); ctx.translate(p.x, p.y); ctx.rotate(p.rot); ctx.strokeStyle = ctx.fillStyle; ctx.lineWidth = 0.022; ctx.beginPath(); for (let i = 0; i < 6; i++) ctx.lineTo(Math.cos(i * 1.0472) * sz, Math.sin(i * 1.0472) * sz); ctx.closePath(); ctx.stroke(); ctx.globalAlpha *= 0.25; ctx.fill(); ctx.restore(); break;
       case 'ring': ctx.strokeStyle = ctx.fillStyle; ctx.lineWidth = 0.022; ctx.beginPath(); ctx.ellipse(p.x, p.y, sz, sz * 0.28, 0, 0, 6.283); ctx.stroke(); break;
       case 'bubble': {                                                      // 記憶の泡: 思い出した言葉が入って、ふわふわ浮かぶ
         const r = sz; ctx.beginPath(); ctx.arc(p.x, p.y, r, 0, 6.283); ctx.fillStyle = `hsla(${p.h},80%,80%,0.18)`; ctx.fill();
@@ -1021,6 +1038,7 @@ const chatHistory = [];     // {role:'user'|'ai', text}
 let emotion = 'neutral';
 let emotionTimer = null;
 let lastUserText = '';
+let S = { topic_enabled: 1, topic_first_sec: 75, topic_interval_sec: 240, weather_enabled: 1, guard_enabled: 1, particle_level: 2 };   // 管理メニューで決める設定(サーバーから受け取る)
 let lastAct = performance.now();   // 最後にやりとりした時刻(しばらく静かなら、ルミから話題を出す)
 let me = null, mood = { joy: 50, anger: 0, sadness: 0, affinity: 50 };   // ログイン中のユーザーと、ルミの気分(サーバーが話しかけ方から更新する)
 const baseEmo = () => mood.anger >= 45 ? 'angry' : mood.sadness >= 50 ? 'sad' : mood.joy >= 80 ? 'happy' : 'neutral';   // 何も話していないときの顔つき
@@ -1173,7 +1191,8 @@ async function handleUtterance(text) {
   const faAll = fastActions(text), hold = mood.anger >= 50 && faAll.length > 0;   // 不機嫌なときは、サーバーの判断(ことわるかも)を待ってから動く
   const fa = hold ? [] : faAll, ana = ASK_FEELING_RX.test(text);
   fastPlayed = fa.join(','); actDecided = false;
-  if (fa.length) playActions(fa);                                                   // すぐ動き始める
+  if (S.guard_enabled && ATTACK_RX.test(text)) { playActions(['guard']); fastPlayed = 'guard'; }               // 威圧されたら、すぐ鎧でガード
+  else if (fa.length) playActions(fa);                                                   // すぐ動き始める
   else if (ana) { playActions(['analyze']); fastPlayed = 'analyze'; }              // 気持ちを聞かれたら、めがねで分析
   fetch(CONFIG.actEndpoint, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ text }) })   // 動きの判断(Jev)を、返答の生成と並べて呼ぶ
     .then(r => r.ok ? r.json() : null).catch(() => null).then(j => {
@@ -1181,6 +1200,8 @@ async function handleUtterance(text) {
       if (myTurn !== turn) return;
       if (!j || j.source !== 'jev') { if (hold && !fa.length) { playActions(faAll); fastPlayed = faAll.join(','); } return; }   // Jevが使えないときは、返答APIの動きを使う
       actDecided = true;
+      if (j.attacked && S.guard_enabled && fastPlayed !== 'guard') { playActions(['guard']); fastPlayed = 'guard'; return; }
+      if (fastPlayed === 'guard') return;
       if (!fa.length) {
         const acts = (j.refused || j.actions.length) ? j.actions : (hold ? faAll : []);
         if (acts.length) { playActions(acts); fastPlayed = acts.join(','); }
@@ -1313,7 +1334,7 @@ function showLogin(msg) {
 function applyAuth(j) {
   me = j.user; $('login').hidden = true; $('lgPass').value = '';
   $('meName').textContent = '👤 ' + me.username; $('adminBtn').style.display = me.role === 'admin' ? '' : 'none';
-  $('who').classList.add('on'); setMood(j.mood);
+  $('who').classList.add('on'); setMood(j.mood); applySettings(j.settings); startGeo(false);
 }
 $('loginForm').addEventListener('submit', async (e) => {
   e.preventDefault(); $('lgErr').textContent = '';
@@ -1368,8 +1389,8 @@ try { if (new URLSearchParams(location.search).get('topic') === '0') { topicOn =
 for (const ev of ['pointerdown', 'keydown']) addEventListener(ev, () => { lastAct = performance.now(); }, { passive: true });
 const topicQuiet = () => state === 'idle' || (state === 'listening' && !vad.active && !vad.waiting && performance.now() - (vad.lastVoice || 0) > 6000);
 setInterval(async () => {
-  if (!topicOn || !me || topicBusy || document.visibilityState !== 'visible' || !actx || actx.state !== 'running' || !topicQuiet()) return;
-  const wait = new URLSearchParams(location.search).get('topicfast') ? 8000 : (topicCount === 0 ? 75000 : 240000);   // 最初は75秒、そのあとは4分あけて
+  if (!topicOn || !S.topic_enabled || !me || topicBusy || document.visibilityState !== 'visible' || !actx || actx.state !== 'running' || !topicQuiet()) return;
+  const wait = new URLSearchParams(location.search).get('topicfast') ? 8000 : (topicCount === 0 ? S.topic_first_sec : S.topic_interval_sec) * 1000;   // 最初は75秒、そのあとは4分あけて
   if (performance.now() - lastAct < wait) return;
   topicBusy = true; lastAct = performance.now();
   try {
@@ -1380,6 +1401,41 @@ setInterval(async () => {
     }
   } catch (_) {} finally { topicBusy = false; }
 }, 10000);
+
+
+// --- 管理メニューで決める設定(ルミから話題・天気・ガード・パーティクル量) ---
+function applySettings(st) {
+  if (!st) return; S = { ...S, ...st };
+  PT_MAX = [0, 220, 560, 900][S.particle_level] || 560; PT_RATE = [0, 0.5, 1, 1.7][S.particle_level] || 1;
+  if (!S.weather_enabled) { $('wx').textContent = ''; $('geoBtn').style.display = 'none'; } else $('geoBtn').style.display = '';
+}
+async function loadSettingsForm() {
+  const r = await jsend('GET', '/api/admin/settings'); if (!r.ok) return; const { settings: st } = await r.json();
+  $('sTopic').checked = !!st.topic_enabled; $('sFirst').value = st.topic_first_sec; $('sInt').value = st.topic_interval_sec;
+  $('sWeather').checked = !!st.weather_enabled; $('sGuard').checked = !!st.guard_enabled; $('sPart').value = String(st.particle_level);
+}
+$('sSave').onclick = async () => {
+  const body = { topic_enabled: $('sTopic').checked ? 1 : 0, topic_first_sec: +$('sFirst').value, topic_interval_sec: +$('sInt').value, weather_enabled: $('sWeather').checked ? 1 : 0, guard_enabled: $('sGuard').checked ? 1 : 0, particle_level: +$('sPart').value };
+  const r = await jsend('POST', '/api/admin/settings', body); const j = await r.json();
+  $('sMsg').textContent = r.ok ? '保存しました' : (j.error || '保存できませんでした'); if (r.ok) { applySettings(j.settings); loadSettingsForm(); startGeo(true); }
+  setTimeout(() => { $('sMsg').textContent = ''; }, 3000);
+};
+// --- 位置情報 → 天気・気温(約1kmに丸めて送る。ルミが「寒いね」などと声をかけるのに使う) ---
+let geoAt = 0;
+function startGeo(force) {
+  try { if (localStorage.getItem('orb.geo') === '0') { $('wx').textContent = ''; return; } } catch (_) {}
+  if (!S.weather_enabled || !me || !navigator.geolocation) return;
+  if (!force && Date.now() - geoAt < 25 * 60000) return; geoAt = Date.now();
+  navigator.geolocation.getCurrentPosition(async (pos) => {
+    try {
+      const r = await jsend('POST', '/api/location', { lat: pos.coords.latitude, lng: pos.coords.longitude }); const j = await r.json();
+      if (r.ok && j.weather) { const w = j.weather; $('wx').textContent = `${w.icon} ${w.temp}℃`; $('wx').title = `${w.desc} / 体感${w.feels}℃ / 最高${w.max}℃ 最低${w.min}℃`; }
+    } catch (_) {}
+  }, () => { $('wx').textContent = ''; }, { maximumAge: 1800000, timeout: 10000 });
+}
+const paintGeo = () => { let on = true; try { on = localStorage.getItem('orb.geo') !== '0'; } catch (_) {} $('geoBtn').textContent = '位置: ' + (on ? 'ON' : 'OFF'); $('geoBtn').classList.toggle('on', on); };
+$('geoBtn').onclick = () => { let on = true; try { on = localStorage.getItem('orb.geo') !== '0'; localStorage.setItem('orb.geo', on ? '0' : '1'); } catch (_) {} paintGeo(); if (on) $('wx').textContent = ''; else startGeo(true); };
+paintGeo(); setInterval(() => startGeo(false), 5 * 60000);
 
 // --- 管理(ユーザー登録・削除・パスワード再設定・気分リセット) ---
 const fmtDate = (t) => t ? new Date(t).toLocaleString('ja-JP', { month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' }) : 'まだ';
@@ -1413,7 +1469,7 @@ async function loadUsers() {
     row.append(nm, acts, sub); box.appendChild(row);
   }
 }
-$('adminBtn').onclick = () => { $('admin').hidden = false; $('adMsg').textContent = ''; loadUsers(); };
+$('adminBtn').onclick = () => { $('admin').hidden = false; $('adMsg').textContent = ''; loadUsers(); loadSettingsForm(); };
 $('admClose').onclick = () => { $('admin').hidden = true; };
 $('adShow').onclick = () => { const p = $('adPass'); p.type = p.type === 'password' ? 'text' : 'password'; $('adShow').textContent = p.type === 'password' ? '表示' : '隠す'; };
 $('adGen').onclick = () => {

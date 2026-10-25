@@ -64,6 +64,7 @@
     <option value="pyramid">ピラミッド(4方向)</option>
   </select>
   <button id="pyrApex" title="ピラミッドの置き方。先端が上(スマホを下向きに置く)か、先端が下(スマホの上にピラミッドを置く)か。像が逆さまのときに押す" style="display:none">先端: 上</button>
+  <button id="pyrRotBtn" title="見る人の正面にする辺を切り替える(自動→下→左→上→右)" style="display:none">正面: 自動</button>
   <button id="pyrMir" title="像が左右逆(文字が鏡文字)のときに押す" style="display:none">左右反転: OFF</button>
   <button id="pyrFlip" title="ピラミッドの横顔(左右)の向きを入れ替える。見ている向きが逆だったときに押す" style="display:none">向き反転</button>
   <button id="mic">マイク開始</button>
@@ -202,12 +203,15 @@ function log(extra) {
   if (extra && !/^(あなた|ルミ|認識中)/.test(extra)) setNotice(extra);
 }
 // 左上の小さな状態表示は、板に映ると邪魔なので通常モード(画面確認)のときだけ出す
-let pyrApexUp = true, pyrMir = false; try { pyrApexUp = localStorage.getItem('orb.pyrApex') !== 'down'; pyrMir = localStorage.getItem('orb.pyrMir') === '1'; } catch (_) {}
-const paintPyr = () => { $('pyrApex').textContent = '先端: ' + (pyrApexUp ? '上' : '下'); $('pyrMir').textContent = '左右反転: ' + (pyrMir ? 'ON' : 'OFF'); };
+let pyrApexUp = true, pyrMir = false, pyrRot = -1;   // pyrRot: 正面にする辺(-1=自動: 縦長なら左右の辺/横長なら下の辺, 0〜3=手動)
+ try { pyrApexUp = localStorage.getItem('orb.pyrApex') !== 'down'; pyrMir = localStorage.getItem('orb.pyrMir') === '1'; } catch (_) {}
+try { pyrRot = +(localStorage.getItem('orb.pyrRot') ?? -1); } catch (_) {}
+const paintPyr = () => { $('pyrRotBtn').textContent = '正面: ' + (pyrRot < 0 ? '自動' : ['下', '左', '上', '右'][pyrRot]); $('pyrApex').textContent = '先端: ' + (pyrApexUp ? '上' : '下'); $('pyrMir').textContent = '左右反転: ' + (pyrMir ? 'ON' : 'OFF'); };
 $('pyrApex').onclick = () => { pyrApexUp = !pyrApexUp; try { localStorage.setItem('orb.pyrApex', pyrApexUp ? 'up' : 'down'); } catch (_) {} paintPyr(); };
+$('pyrRotBtn').onclick = () => { pyrRot = pyrRot >= 3 ? -1 : pyrRot + 1; try { localStorage.setItem('orb.pyrRot', String(pyrRot)); } catch (_) {} paintPyr(); };
 $('pyrMir').onclick = () => { pyrMir = !pyrMir; try { localStorage.setItem('orb.pyrMir', pyrMir ? '1' : '0'); } catch (_) {} paintPyr(); };
 paintPyr();
-function applyLogVisibility() { $('pyrApex').style.display = $('pyrMir').style.display = $('mode').value === 'pyramid' ? '' : 'none'; $('log').style.display = $('mode').value === 'plain' ? '' : 'none'; $('pyrFlip').style.display = $('mode').value === 'pyramid' && $('char').value === 'mascot3d' ? '' : 'none'; }
+function applyLogVisibility() { $('pyrApex').style.display = $('pyrMir').style.display = $('pyrRotBtn').style.display = $('mode').value === 'pyramid' ? '' : 'none'; $('log').style.display = $('mode').value === 'plain' ? '' : 'none'; $('pyrFlip').style.display = $('mode').value === 'pyramid' && $('char').value === 'mascot3d' ? '' : 'none'; }
 $('pyrFlip').onclick = () => { pyrDir = -pyrDir; try { localStorage.setItem('orb.pyrDir', String(pyrDir)); } catch (_) {} };
 $('char').addEventListener('change', () => applyLogVisibility());
 
@@ -283,17 +287,18 @@ function layoutCaption(text, base, maxW) {
   return capCache.lay;
 }
 
+let pyrActive = false;   // ピラミッド表示中は、4面それぞれに小さく・面の幅に収めて字幕を出す(全画面幅で描くと、4面が重なってめちゃくちゃになる)
 function drawCaption(R, cap) {
-  let base = Math.max(18, Math.min(R * 0.30, W * 0.06));
-  const maxW = W * 0.88;
+  let base = pyrActive ? Math.max(11, Math.min(R * 0.2, 26)) : Math.max(18, Math.min(R * 0.30, W * 0.06));
+  const maxW = pyrActive ? Math.max(R * 3.4, 120) : W * 0.88;
   ctx.save();
   ctx.textAlign = 'left'; ctx.textBaseline = 'alphabetic';
   let lay = layoutCaption(cap.text, base, maxW);
-  while (lay.h > H * 0.34 && base > 14) { base *= 0.9; lay = layoutCaption(cap.text, base, maxW); }
+  while (lay.h > (pyrActive ? R * 1.2 : H * 0.34) && base > (pyrActive ? 9 : 14)) { base *= 0.9; lay = layoutCaption(cap.text, base, maxW); }
   // 画面からはみ出さないように位置を調整する(板で上下反転していても、画面上の位置で判断)
-  let top = R * 2.05;
+  let top = pyrActive ? R * (pyrApexUp ? 1.45 : -1.45 - 0.5) : R * 2.05;   // 先端が上: 像の足もと(外側)に出す
   const m = ctx.getTransform(), d = m.d / DPR;
-  if (Math.abs(d) > 0.001) {
+  if (!pyrActive && Math.abs(d) > 0.001) {
     const scr = y => m.f / DPR + d * y;
     const a1 = scr(top), a2 = scr(top + lay.h), lo = Math.min(a1, a2), hi = Math.max(a1, a2);
     const limitBot = H - ($('ui').classList.contains('hidden') ? 10 : $('ui').offsetHeight + 10);
@@ -1047,7 +1052,7 @@ function frame(now) {
   ctx.setTransform(DPR, 0, 0, DPR, 0, 0);
   ctx.fillStyle = '#000'; ctx.fillRect(0, 0, W, H);
 
-  const mode = $('mode').value;
+  const mode = $('mode').value; pyrActive = mode === 'pyramid';
   { const sc = mode === 'pyramid' ? 0.62 : 1; if (window.Lumi3D && Lumi3D.setScale && sc !== frame.sc) { Lumi3D.setScale(sc); frame.sc = sc; } }   // ピラミッドは1フレームに4回描くので、3Dの解像度を下げて軽くする
   const size = +$('size').value / 100;       // 画面短辺に対する割合
   const pos = +$('pos').value / 100;         // 0..1
@@ -1060,12 +1065,13 @@ function frame(now) {
     // 斜め板: 板で上下が反転して見えるので、あらかじめ上下反転して描く
     ctx.save(); ctx.translate(W / 2, H * (0.15 + pos * 0.6)); ctx.scale(1, -1); drawChar(R * 1.6, time); ctx.restore();
   } else {
-    // ピラミッド: 中心から離れた4方向に、外向きが「上」になるよう配置
+    // ピラミッド: 中心から離れた4方向に配置。スマホを横向きに置くと、長い辺が見る人の正面になる
     const d = side * (0.16 + size * 0.22);
+    const base = pyrRot >= 0 ? pyrRot : (W >= H ? 0 : 1);
     for (let k = 0; k < 4; k++) {
       ctx.save();
       ctx.translate(W / 2, H * (0.2 + pos * 0.6));
-      ctx.rotate(k * Math.PI / 2);
+      ctx.rotate((k + base) * Math.PI / 2);
       ctx.translate(0, d);
       if (!pyrApexUp) ctx.scale(1, -1);          // 先端が下(画面の上にピラミッド): 頭が外向き / 先端が上(スマホを下向きに置く): 頭が中心向き
       if (pyrMir) ctx.scale(-1, 1);

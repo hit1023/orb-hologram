@@ -202,6 +202,39 @@ export function createLumi3D({ width = 560, height = 720 } = {}) {
   mesh(new THREE.SphereGeometry(0.1, 12, 10), new THREE.MeshBasicMaterial({ color: 0xff7aa8 }), orb, 0, -0.2, 0.93).scale.set(1.3, 0.7, 0.5);
   const halo = mesh(new THREE.TorusGeometry(0.62, 0.055, 10, 48), new THREE.MeshToonMaterial({ color: 0xffe27a, gradientMap: grad, emissive: 0xc9a020, emissiveIntensity: 0.9 }), head, 0, 1.62, 0); halo.rotation.x = Math.PI / 2 + 0.25; halo.visible = false;
 
+  // 進化先の飾り: kinds.json の部品定義から組み立てる(科学者の白衣・芸術家のベレー帽・店員のエプロンなど)。足すだけで増える
+  const kindGroups = {};
+  function heartGeometry(size) {
+    const sh = new THREE.Shape(); sh.moveTo(0, -0.3); sh.bezierCurveTo(-0.55, 0.05, -0.3, 0.5, 0, 0.22); sh.bezierCurveTo(0.3, 0.5, 0.55, 0.05, 0, -0.3);
+    const g = new THREE.ExtrudeGeometry(sh, { depth: 0.08, bevelEnabled: true, bevelThickness: 0.03, bevelSize: 0.03, bevelSegments: 2 }); g.translate(0, 0, -0.04); g.scale(size / 0.3, size / 0.3, size / 0.3); return g;
+  }
+  function registerKinds(list) {
+    for (const v of Object.values(kindGroups)) v.groups.forEach((g) => g.parent && g.parent.remove(g));
+    for (const k of Object.keys(kindGroups)) delete kindGroups[k];
+    for (const kd of list || []) {
+      const gHead = new THREE.Group(), gBody = new THREE.Group(); head.add(gHead); body.add(gBody);
+      const gTails = tails.map((piv) => { const g = new THREE.Group(); piv.add(g); return { g, side: piv.position.x < 0 ? -1 : 1 }; });
+      const groups = [gHead, gBody, ...gTails.map((t) => t.g)]; groups.forEach((g) => { g.visible = false; });
+      const geo = (sp) => { const d = sp.d || [0.1];
+        switch (sp.s) { case 'sphere': return new THREE.SphereGeometry(d[0], 18, 14); case 'cone': return new THREE.ConeGeometry(d[0], d[1], 16); case 'box': return new THREE.BoxGeometry(d[0], d[1], d[2]);
+          case 'cyl': return new THREE.CylinderGeometry(d[0], d[1], d[2], 28); case 'torus': return new THREE.TorusGeometry(d[0], d[1], 8, 40); case 'star': return starGeometry(d[0], d[1]); case 'heart': return heartGeometry(d[0]);
+          default: return new THREE.SphereGeometry(0.05, 8, 6); } };
+      const matOf = (hex, e) => new THREE.MeshToonMaterial({ color: hex, gradientMap: grad, emissive: hex, emissiveIntensity: e === undefined ? 0.25 : e });
+      const put = (parent, sp, hex, pos, side, mirrored) => {
+        const m = new THREE.Mesh(geo(sp), matOf(hex, sp.e)); const r = sp.rot || [0, 0, 0], sc = sp.sc || [1, 1, 1];
+        m.position.set(pos[0] * side * (mirrored ? -1 : 1), pos[1], pos[2]); m.rotation.set(r[0], r[1] * side * (mirrored ? -1 : 1), r[2] * side * (mirrored ? -1 : 1)); m.scale.set(sc[0], sc[1], sc[2]); parent.add(m); };
+      for (const sp of kd.parts || []) {
+        const targets = sp.p === 'tails' ? gTails.map((t) => ({ parent: t.g, side: t.side })) : [{ parent: sp.p === 'head' ? gHead : gBody, side: 1 }];
+        for (const tg of targets) {
+          if (sp.ring) { for (let i = 0; i < sp.ring.n; i++) { const a = i / sp.ring.n * Math.PI * 2; put(tg.parent, sp, sp.ring.cols ? sp.ring.cols[i % sp.ring.cols.length] : sp.c, [Math.sin(a) * sp.ring.r, sp.ring.y + Math.sin(a * 3) * 0.04, Math.cos(a) * sp.ring.r], 1, false); } continue; }
+          put(tg.parent, sp, sp.c, sp.pos || [0, 0, 0], tg.side, false);
+          if (sp.mirror) put(tg.parent, sp, sp.c, sp.pos || [0, 0, 0], tg.side, true);
+        }
+      }
+      kindGroups[kd.key] = { groups, glasses: !!kd.glasses };
+    }
+  }
+
   // めがね(分析のとき): 顔の前にかけて、ぽんっと出る。ホログラム板では黒が透明なので、明るい色にする
   const glasses = new THREE.Group(); glasses.position.set(0, -0.02, 1.0); head.add(glasses); glasses.visible = false;
   const gfMat = new THREE.MeshBasicMaterial({ color: 0xffd23f }), glMat = new THREE.MeshBasicMaterial({ color: 0xa8ecff, transparent: true, opacity: 0.2, depthWrite: false });
@@ -372,6 +405,8 @@ export function createLumi3D({ width = 560, height = 720 } = {}) {
       orbEyes.forEach((e) => e.scale.y = 1 - (p.blink || 0) * 0.9);
     }
     if (st >= 4) halo.rotation.z = t * 0.9;
+    { const kd = st >= 3 ? p.kind : null; for (const key in kindGroups) { const on = key === kd; for (const g of kindGroups[key].groups) if (g.visible !== on) g.visible = on; } }   // 進化先の飾り
+    if (an <= 0.02) { const sci = st >= 3 && p.kind && kindGroups[p.kind] && kindGroups[p.kind].glasses; glasses.visible = !!sci; if (sci) { glasses.scale.setScalar(1); glasses.position.y = -0.02; } }   // 科学者は、いつもメガネ
     const gd = fx.guard || 0;                                          // ガード: 鎧とたてが、ぱっと出る
     armor.visible = tiara.visible = gd > 0.02;
     if (gd > 0.02) {
@@ -383,7 +418,7 @@ export function createLumi3D({ width = 560, height = 720 } = {}) {
     renderer.render(scene, camera);
     return renderer.domElement;
   }
-  return { render, width, height, setScale(f) { renderer.setSize(Math.max(64, Math.round(width * f)), Math.max(64, Math.round(height * f)), false); }, dispose() { renderer.dispose(); } };
+  return { render, width, height, registerKinds, setScale(f) { renderer.setSize(Math.max(64, Math.round(width * f)), Math.max(64, Math.round(height * f)), false); }, dispose() { renderer.dispose(); } };
 }
 
 try { window.Lumi3D = createLumi3D(); } catch (e) { console.warn('Lumi3D unavailable:', e && e.message); }

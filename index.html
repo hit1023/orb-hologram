@@ -107,6 +107,12 @@
     <div class="row" style="justify-content:flex-end"><button type="button" id="pwCancel" class="sm">キャンセル</button><button type="submit" class="primary sm">OK</button></div>
   </form>
 </div>
+<div id="growth" class="overlay" hidden>
+  <div class="card wide">
+    <div class="row" style="justify-content:space-between"><h1 id="grTitle">育ちの様子</h1><button id="grClose" class="sm">閉じる</button></div>
+    <div id="grBody"></div>
+  </div>
+</div>
 <div id="flash" style="position:fixed;inset:0;background:#fff;opacity:0;pointer-events:none;z-index:15;transition:opacity 1.1s ease-out"></div>
 <div id="jobs" class="overlay" hidden>
   <div class="card wide">
@@ -812,7 +818,7 @@ function actPose(n, u, d) {
 let idleActs = true, idleFast = false, nextIdle = 0;
 try { const q = new URLSearchParams(location.search); if (q.get('idle') === '0') idleActs = false; if (q.get('idlefast')) idleFast = true; } catch (_) {}
 const IDLE_POOL = [['look_around', 30], ['yawn', 20], ['sway', 20], ['tilt_head', 15], ['sparkle', 9], ['faint', 6]];
-function pickIdle() { let r = Math.random() * 100; for (const [n, w] of IDLE_POOL) { if ((r -= w) < 0) return n; } return 'look_around'; }
+function pickIdle() { const pool = (G.stage >= 3 && G.kind && kindMap[G.kind] && kindMap[G.kind].idle) || IDLE_POOL; let r = pool.reduce((a, [, w]) => a + w, 0) * Math.random(); for (const [n, w] of pool) { if ((r -= w) < 0) return n; } return 'look_around'; }   // 進化先ごとに、自分から起こす動きが変わる
 function updateActions(time) {
   if (actFrame === time) return curFx; actFrame = time;
   if (idleActs && !actCur && !actQueue.length && (state === 'idle' || state === 'listening')) {
@@ -985,7 +991,7 @@ function drawMascot3D(R, time, view = 0) {
   const { fx, key, e, lv, blink, speaking } = M3;
   const cvs = L.render({
     time, spin: spin3 + ((state === 'idle') ? Math.sin(time * 0.8) * 0.3 : 0) + view * (Math.PI / 2) * pyrDir, pose: key, eye: e.eye, mouth: (fx && fx.mouth) || e.mouth, wink: fx && fx.wink, open: (fx && fx.open !== undefined) ? fx.open : (speaking ? Math.max(0.1, lv) : 0),
-    stage: G.stage, crack: G.progress, fx, blink: (fx && fx.closeEyes) ? 1 : blink, blush: mc.blush, brow: mc.brow, raise: mc.raise, tilt: mc.tilt, listening: state === 'listening',
+    stage: G.stage, crack: G.progress, kind: G.kind, fx, blink: (fx && fx.closeEyes) ? 1 : blink, blush: mc.blush, brow: mc.brow, raise: mc.raise, tilt: mc.tilt, listening: state === 'listening',
     talk: speaking ? 0.5 + lv : 0, tear: key === 'sad' ? 1 - ((time * 0.5) % 1) * 0.8 : (fx && fx.sweat ? 1 - ((time * 1.3) % 1) * 0.8 : 0),
   });
   ctx.save();
@@ -1068,7 +1074,8 @@ const chatHistory = [];     // {role:'user'|'ai', text}
 let emotion = 'neutral';
 let emotionTimer = null;
 let lastUserText = '';
-let G = { stage: 3, name: 'ルミ', icon: '⭐', xp: 0, next: null, progress: 1, streak: 0 }, gInit = false;   // 成長(たまごっち): 会話を重ねるほど育つ
+let G = { stage: 3, name: 'ルミ', icon: '⭐', xp: 0, next: null, progress: 1, streak: 0, kind: null, traits: [], leaning: null }, gInit = false;
+let KINDS = [], kindMap = {};   // 進化先の定義(サーバーの kinds.json): 見た目の部品・自発行動・まわりの粒・お祝いの一言   // 成長(たまごっち): 会話を重ねるほど育つ
 let S = { growth_rate: 100, anger_gain: 150, research_enabled: 1, topic_enabled: 1, topic_first_sec: 75, topic_interval_sec: 240, weather_enabled: 1, guard_enabled: 1, particle_level: 2 };   // 管理メニューで決める設定(サーバーから受け取る)
 let lastAct = performance.now();   // 最後にやりとりした時刻(しばらく静かなら、ルミから話題を出す)
 let me = null, mood = { joy: 50, anger: 0, sadness: 0, affinity: 50 };   // ログイン中のユーザーと、ルミの気分(サーバーが話しかけ方から更新する)
@@ -1365,7 +1372,7 @@ function showLogin(msg) {
 function applyAuth(j) {
   me = j.user; $('login').hidden = true; $('lgPass').value = '';
   $('meName').textContent = '👤 ' + me.username; $('adminBtn').style.display = me.role === 'admin' ? '' : 'none';
-  $('who').classList.add('on'); setMood(j.mood); applySettings(j.settings); startGeo(false); startEvents(); if (!jobsAt) refreshJobs(); if (j.growth) setGrowth(j.growth);
+  $('who').classList.add('on'); setMood(j.mood); applySettings(j.settings); startGeo(false); startEvents(); if (!jobsAt) refreshJobs(); if (j.growth) setGrowth(j.growth); loadKinds();
 }
 $('loginForm').addEventListener('submit', async (e) => {
   e.preventDefault(); $('lgErr').textContent = '';
@@ -1503,11 +1510,11 @@ setInterval(async () => {
 function setGrowth(g) {
   if (!g || typeof g.stage !== 'number') return;
   const evolved = g.evolved || (gInit && g.stage > G.stage ? { from: G.stage, to: g.stage, toName: g.name } : null);
-  G = { stage: g.stage, name: g.name, icon: g.icon, xp: g.xp, next: g.next, nextName: g.nextName, progress: g.progress, streak: g.streak || 0 };
+  G = { stage: g.stage, name: g.name, icon: g.icon, xp: g.xp, next: g.next, nextName: g.nextName, progress: g.progress, streak: g.streak || 0, kind: g.kind || null, kindName: g.kindName || null, traits: g.traits || [], leaning: g.leaning || null };
   gInit = true;
   $('gTxt').textContent = `${g.icon} ${g.name}`;
   $('gBar').style.width = Math.round(g.progress * 100) + '%';
-  $('gBadge').title = `${g.name}  経験値 ${g.xp}` + (g.next ? `(あと ${g.next - g.xp} で「${g.nextName}」)` : '(いちばん育ちました)') + (g.streak > 1 ? `  ${g.streak}日連続` : '');
+  $('gBadge').title = `(押すと、育ちの様子)  ${g.name}  経験値 ${g.xp}` + (g.next ? `(あと ${g.next - g.xp} で「${g.nextName}」)` : '(いちばん育ちました)') + (g.streak > 1 ? `  ${g.streak}日連続` : '');
   if (evolved) evolveCeremony(evolved);
 }
 function evolveCeremony(ev) {
@@ -1515,11 +1522,52 @@ function evolveCeremony(ev) {
   for (let i = 0; i < 70; i++) ptSpawn('confetti', { x: rnd(-1.6, 1.6), y: rnd(-0.6, 0.8), vx: rnd(-1.4, 1.4), vy: -rnd(0.4, 1.8), g: 1.3, life: rnd(2.2, 3.6), size: rnd(0.07, 0.14), h: ev.from === 0 ? rnd(35, 55) : rnd(0, 360), s: 90, l: ev.from === 0 ? 88 : 65, rot: rnd(0, 6), vr: rnd(-8, 8), front: true });
   for (let i = 0; i < 30; i++) ptSpawn('star', { x: rnd(-1.2, 1.2), y: rnd(-1, 1), vx: rnd(-1.2, 1.2), vy: rnd(-1.2, 1.2), life: rnd(0.8, 1.8), size: rnd(0.06, 0.16), h: 50, s: 100, l: 85, rot: rnd(0, 6), front: true });
   log(ev.from === 0 ? '🥚 たまごが、孵化した！' : `🎉 ${ev.toName} に育った！`);
-  const lines = { 1: 'ぴかっ！', 2: 'ことば、おぼえたよ！', 3: 'わぁ、ルミになったよ！ありがとう！', 4: 'なんだか、星みたいに光ってる……' };
+  const kd = ev.kind && kindMap[ev.kind];
+  const lines = { 1: 'ぴかっ！', 2: 'ことば、おぼえたよ！', 3: (kd && kd.line) || 'わぁ、ルミになったよ！ありがとう！', 4: 'なんだか、星みたいに光ってる……' };
   setTimeout(() => { if (state === 'idle' && actx && actx.state === 'running') speak(lines[ev.to] || '', 'happy', []); }, 1400);
   if (ev.to >= 2) setTimeout(() => playActions(['jump']), 300);
 }
 setInterval(() => { if (G.stage >= 4 && Math.random() < 0.5) { const a = rnd(0, 6.283); ptSpawn('star', { orb: 1, ang: a, rad: rnd(1.3, 2.0), dr: 0, w: rnd(0.3, 0.7), cx: 0, cy: -0.1, life: rnd(2.5, 4), size: rnd(0.04, 0.1), h: rnd(40, 55), s: 100, l: 80, rot: rnd(0, 6) }); } if (G.stage === 0 && Math.random() < G.progress) ptSpawn('star', { x: rnd(-0.5, 0.5), y: rnd(-0.2, 0.9), vy: -rnd(0.1, 0.4), life: rnd(0.6, 1.2), size: rnd(0.03, 0.07), h: 48, s: 100, l: 85, rot: rnd(0, 6), front: true }); }, 250);
+
+
+// --- 進化先(kinds.json)の読み込み・育ちのパネル・進化先ごとの粒 ---
+async function loadKinds() {
+  if (KINDS.length || !me) return;
+  try {
+    const r = await _fetch('/api/kinds'); if (!r.ok) return; KINDS = (await r.json()).kinds; kindMap = Object.fromEntries(KINDS.map(k => [k.key, k]));
+    const reg = () => { if (window.Lumi3D && Lumi3D.registerKinds) Lumi3D.registerKinds(KINDS); else setTimeout(reg, 300); }; reg();
+  } catch (_) {}
+}
+function renderGrowth() {
+  const box = $('grBody'); box.textContent = '';
+  $('grTitle').textContent = `${G.icon} ${G.name}`;
+  const add = (txt, cls) => { const d = document.createElement('div'); d.className = cls || 'sub'; d.textContent = txt; box.appendChild(d); return d; };
+  add(`経験値 ${G.xp}` + (G.next ? `  あと ${G.next - G.xp} で「${G.nextName}」` : '  いちばん育ちました') + (G.streak > 1 ? `  ／  ${G.streak}日連続` : ''), 'sub').style.color = '#9bd';
+  if (G.stage < 3) add('「ルミ」になるとき、いちばん強かった傾向に、進化します。いろいろな話をしてみてください。', 'sub');
+  else add(`進化先: ${G.kindName || G.name}`, 'nm');
+  const top = G.traits.reduce((m, t) => (t.score > (m ? m.score : 0) ? t : m), null);
+  for (const t of G.traits) {
+    const row = document.createElement('div'); row.style.cssText = 'display:grid;grid-template-columns:132px 1fr 34px;gap:8px;align-items:center;padding:4px 0;font-size:13px';
+    const lab = document.createElement('div'); lab.textContent = `${t.icon} ${t.name}${t.name.endsWith('の') ? '' : ''}`; if (top && t.key === top.key && t.score > 0) lab.style.color = '#fc6';
+    const bar = document.createElement('div'); bar.style.cssText = 'height:8px;border-radius:4px;background:#1b2a38;overflow:hidden'; const fill = document.createElement('div'); fill.style.cssText = `height:100%;width:${Math.max(t.score ? 4 : 0, Math.min(100, t.pct))}%;background:${top && t.key === top.key ? '#fc6' : '#6cf'}`; bar.appendChild(fill);
+    const sc = document.createElement('div'); sc.textContent = t.score; sc.style.color = '#7ab'; row.append(lab, bar, sc); box.appendChild(row);
+    const hint = document.createElement('div'); hint.className = 'sub'; hint.style.cssText = 'grid-column:1/-1;margin:-2px 0 4px 2px;font-size:11px'; hint.textContent = t.trait; // 話題の例
+    if (t.trait) box.appendChild(hint);
+  }
+}
+$('gBadge').style.cursor = 'pointer';
+$('gBadge').onclick = () => { renderGrowth(); $('growth').hidden = false; };
+$('grClose').onclick = () => { $('growth').hidden = true; };
+// 進化先ごとの、まわりの粒(🔬⚛️ / 🎨🎵 / 🍃🧭 / 🌸💗 / 🛒🏷️ / 🌷 / 🐟🫧 / 💢)
+setInterval(() => {
+  const kd = G.stage >= 3 && G.kind && kindMap[G.kind]; if (!kd || !kd.particle || document.visibilityState !== 'visible') return;
+  const pt = kd.particle; if (Math.random() > pt.rate * 0.25 * PT_RATE) return;
+  const ch = pt.chars[Math.floor(Math.random() * pt.chars.length)], big = rnd(0.16, 0.26);
+  if (pt.mode === 'orbit') ptSpawn('text', { orb: 1, ang: rnd(0, 6.283), rad: rnd(1.2, 1.8), dr: 0, w: rnd(0.4, 0.9) * (Math.random() < 0.5 ? -1 : 1), cx: 0, cy: -0.2, life: rnd(3, 5), size: big, ch, front: true });
+  else if (pt.mode === 'rise') ptSpawn('text', { x: rnd(-1.4, 1.4), y: rnd(0.6, 1.4), vy: -rnd(0.3, 0.6), vx: rnd(-0.1, 0.1), life: rnd(2.5, 3.8), size: big, ch, front: true });
+  else if (pt.mode === 'fall') ptSpawn('text', { x: rnd(-1.6, 1.6), y: -2.2, vy: rnd(0.3, 0.6), vx: rnd(-0.15, 0.15), life: rnd(4, 6), size: big, ch, rot: rnd(-0.4, 0.4), front: true });
+  else ptSpawn('text', { x: rnd(0.7, 1.1) * (Math.random() < 0.5 ? -1 : 1), y: rnd(-1.2, -0.7), vy: -0.1, life: 1.2, size: rnd(0.22, 0.32), ch, rot: rnd(-0.3, 0.3), front: true });
+}, 250);
 
 // --- 管理メニューで決める設定(ルミから話題・天気・ガード・パーティクル量) ---
 function applySettings(st) {
@@ -1574,6 +1622,7 @@ async function loadUsers() {
     });
     mk('成長+50', '', async () => { await jsend('POST', `/api/admin/users/${u.id}/growth`, { add: 50 }); loadUsers(); });
     mk('次の段階へ', '', async () => { await jsend('POST', `/api/admin/users/${u.id}/growth`, { stage: Math.min(4, u.growth.stage + 1) }); loadUsers(); });
+    mk('進化先▶', '', async () => { const keys = [...KINDS.map(k => k.key), 'normal']; const cur = keys.indexOf(u.growth.kind || 'normal'); await jsend('POST', `/api/admin/users/${u.id}/growth`, { stage: Math.max(3, u.growth.stage), kind: keys[(cur + 1) % keys.length] }); loadUsers(); });
     mk('たまごに戻す', '', async () => { if (!confirm(`${u.username} の成長を、たまごに戻しますか?`)) return; await jsend('POST', `/api/admin/users/${u.id}/growth`, { reset: true }); loadUsers(); });
     mk('気分リセット', '', async () => { await jsend('POST', `/api/admin/users/${u.id}/mood-reset`); loadUsers(); });
     mk('記憶を消す', '', async () => {

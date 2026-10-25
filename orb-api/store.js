@@ -70,6 +70,10 @@ for (const col of ["interests TEXT", "int_turns INTEGER NOT NULL DEFAULT 0", "af
   try { db.exec(`ALTER TABLE moods ADD COLUMN ${col}`); } catch (_) { /* もうある */ }
 }
 
+for (const col of ["traits TEXT", "kind TEXT"]) {          // 成長: 興味の傾向(科学・芸術・冒険・お世話・ツンデレ)と、進化先
+  try { db.exec(`ALTER TABLE growth ADD COLUMN ${col}`); } catch (_) { /* もうある */ }
+}
+
 const now = () => Date.now();
 const sha = (s) => crypto.createHash('sha256').update(s).digest('hex');
 
@@ -192,14 +196,15 @@ const clearEnv = (userId) => db.prepare('DELETE FROM user_env WHERE user_id = ?'
 
 // ---- 成長(経験値・連続日数) ----
 function getGrowth(userId) {
-  const r = db.prepare('SELECT xp, streak, last_day, day, day_xp, turns FROM growth WHERE user_id = ?').get(userId);
+  const r = db.prepare('SELECT xp, streak, last_day, day, day_xp, turns, traits, kind FROM growth WHERE user_id = ?').get(userId);
   if (r) return r;
   const n = db.prepare('SELECT COUNT(*) AS n FROM turns WHERE user_id = ?').get(userId).n;     // 成長機能の前から話していた人は、過去の会話数から経験値を引き継ぐ(ルミの手前まで)
-  return { xp: Math.min(n * 3, 299), streak: 0, last_day: null, day: null, day_xp: 0, turns: n };
+  return { xp: Math.min(n * 3, 299), streak: 0, last_day: null, day: null, day_xp: 0, turns: n, traits: null, kind: null };
 }
-const saveGrowth = (userId, g) => db.prepare(`INSERT INTO growth (user_id, xp, streak, last_day, day, day_xp, turns) VALUES (?, ?, ?, ?, ?, ?, ?)
-  ON CONFLICT(user_id) DO UPDATE SET xp = excluded.xp, streak = excluded.streak, last_day = excluded.last_day, day = excluded.day, day_xp = excluded.day_xp, turns = excluded.turns`)
-  .run(userId, g.xp, g.streak, g.last_day, g.day, g.day_xp, g.turns);
+const saveGrowth = (userId, g) => db.prepare(`INSERT INTO growth (user_id, xp, streak, last_day, day, day_xp, turns, traits, kind) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+  ON CONFLICT(user_id) DO UPDATE SET xp = excluded.xp, streak = excluded.streak, last_day = excluded.last_day, day = excluded.day, day_xp = excluded.day_xp, turns = excluded.turns, traits = excluded.traits, kind = excluded.kind`)
+  .run(userId, g.xp, g.streak, g.last_day, g.day, g.day_xp, g.turns, g.traits ?? null, g.kind ?? null);
+const recentUserTexts = (userId, n = 300) => db.prepare('SELECT user_text FROM turns WHERE user_id = ? ORDER BY id DESC LIMIT ?').all(userId, n).map(r => r.user_text);
 
 // ---- 調査の依頼(あとで調べて報告する) ----
 const MAX_PENDING_PER_USER = 5, MAX_PER_DAY = 20;
@@ -249,5 +254,5 @@ const turnStats = (userId) => db.prepare('SELECT COUNT(*) AS n, MIN(created_at) 
 const countTurns = (userId) => db.prepare('SELECT COUNT(*) AS n FROM turns WHERE user_id = ?').get(userId).n;
 const clearTurns = (userId) => db.prepare('DELETE FROM turns WHERE user_id = ?').run(userId).changes;
 
-module.exports = { getGrowth, saveGrowth, clearJobs, listJobs, addJob, nextPendingJob, setJobRunning, finishJob, takeDoneJob, markJobDelivered, failStaleJobs, countJobs, getSettings, setSettings, saveEnv, getEnv, clearEnv, saveInterests, getInterests, toldNews, markNewsTold, turnStats, addTurn, setTurnVec, recentTurns, turnsWithVec, countTurns, clearTurns, createUser, countUsers, countAdmins, listUsers, getUser, deleteUser, setPassword, checkLogin, verifyUserPassword,
+module.exports = { recentUserTexts, getGrowth, saveGrowth, clearJobs, listJobs, addJob, nextPendingJob, setJobRunning, finishJob, takeDoneJob, markJobDelivered, failStaleJobs, countJobs, getSettings, setSettings, saveEnv, getEnv, clearEnv, saveInterests, getInterests, toldNews, markNewsTold, turnStats, addTurn, setTurnVec, recentTurns, turnsWithVec, countTurns, clearTurns, createUser, countUsers, countAdmins, listUsers, getUser, deleteUser, setPassword, checkLogin, verifyUserPassword,
   createSession, sessionUser, deleteSession, loadMoodRow, saveMoodRow, saveImpression, resetMood, validateNewUser };

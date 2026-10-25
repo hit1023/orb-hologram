@@ -28,6 +28,7 @@ jobs:
           node --check orb-api/bus.js
           node --check orb-api/research.js
           node --check orb-api/growth.js
+          node -e "const k=require('./orb-api/kinds.json').kinds;if(!k.length||k.some(x=>!x.key||!x.name))process.exit(1);for(const x of k)if(x.rx)new RegExp(x.rx)"
           cp lumi3d.js /tmp/lumi3d.mjs && node --check /tmp/lumi3d.mjs
       - name: Validate compose
         run: |

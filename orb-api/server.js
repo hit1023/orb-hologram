@@ -239,6 +239,8 @@ function jevQuestions() {
     intimidating: '威圧・脅し・怒鳴りつけ・高圧的に責め立てる・脅迫する(例:ふざけるな、黙れ、なめるな、ただじゃおかない、何様のつもりだ)' } };
   q.topic = { type: 'choice', instructions: 'ユーザーは、どんな出来事を話しているか', criteria: {
     none: '特に出来事の話ではない', happy: 'うれしい・楽しい出来事を話している', sad: '悲しい・つらい・落ち込んだ出来事を話している' } };
+  q.genre = { type: 'choice', instructions: 'ユーザーが話している話題・興味のジャンルは何か', criteria: {   // 進化先(kinds.json)の話題から、自動で作る
+    none: '特定のジャンルではない(あいさつ・雑談・命令・短い返事)', ...Object.fromEntries(growth.KJ.filter(k => k.genre).map(k => [k.key, k.genre])) } };
   q.intent = { type: 'choice', instructions: 'ユーザーはキャラクターに、何を求めているか', criteria: {
     none: '特に当てはまらない(ふつうの会話・質問・頼みごと)',
     ask_feeling: 'キャラクター自身が、ユーザーのことをどう思っているか・ユーザーの印象・評価・好き嫌い・キャラクターの今の気持ちを尋ねている(例:俺のイメージは?、私のことどう思う?、今どんな気持ち?)' } };
@@ -265,9 +267,9 @@ async function jevAct(text) {
     const r = pick('react', 0.6);
     if (r && ACTIONS.includes(r.c) && Date.now() - lastSpont > 15000 && (r.p >= 0.85 || Math.random() < 0.6)) { acts.push(r.c); spontaneous = true; lastSpont = Date.now(); }
   }
-  const mp = pick('manner', 0.5), tp = pick('topic', 0.5), ip = pick('intent', 0.6);
+  const mp = pick('manner', 0.5), tp = pick('topic', 0.5), ip = pick('intent', 0.6), gp = pick('genre', 0.5);
   const manner = mp && (!['rude', 'intimidating'].includes(mp.c) || mp.p >= 0.6) ? mp.c : 'neutral';
-  return { actions: acts, spontaneous, manner, topic: tp ? tp.c : 'none', askFeeling: !!(ip && ip.c === 'ask_feeling') };
+  return { actions: acts, spontaneous, manner, topic: tp ? tp.c : 'none', genre: gp ? gp.c : 'none', askFeeling: !!(ip && ip.c === 'ask_feeling') };
 }
 
 // ---- 1回の発話の分析(動き・話しかけ方)と、気分の更新。/api/act と /api/chat が同じ結果を共有する ----
@@ -283,6 +285,7 @@ function userTurn(user, text) {
       catch (e) { console.log(`[act] failed: ${e.message}`); }
     }
     if (!an) an = { actions: [], spontaneous: false, ...moodLib.heuristic(text) };
+    if (!an.genre || an.genre === 'none') { for (const k of growth.GENRE_KEYS) if (growth.GENRE_RX[k].test(text)) { an.genre = k; break; } }
     an.askFeeling = an.askFeeling || moodLib.asksFeeling(text);
     const before = moodLib.decayed(store.loadMoodRow(user.id));
     const after = moodLib.apply(before, an, store.getSettings().anger_gain / 100);
@@ -485,6 +488,10 @@ http.createServer(async (req, res) => {
       const u = currentUser(req); if (!u) return send(res, 401, { error: 'login required' });
       return send(res, 200, { ok: true, deleted: store.clearJobs(u.id) });
     }
+    if (req.method === 'GET' && url === '/api/kinds') {                     // 進化先の定義(見た目の部品・自発行動・粒・お祝いの一言)。口調や分類のしかたは返さない
+      const u = currentUser(req); if (!u) return send(res, 401, { error: 'login required' });
+      return send(res, 200, { kinds: growth.KJ.map(k => ({ key: k.key, name: k.name, icon: k.icon, line: k.line, idle: k.idle, particle: k.particle, parts: k.parts, glasses: !!k.glasses })) });
+    }
     if (req.method === 'GET' && url === '/api/jobs') {                      // 調べ物の状況(調べ中・完了・報告済み)
       const u = currentUser(req); if (!u) return send(res, 401, { error: 'login required' });
       const rows = store.listJobs(u.id, 10).map(j => ({ id: j.id, query: j.query, status: j.status, delivered: !!j.delivered, created_at: j.created_at, done_at: j.done_at,
@@ -495,7 +502,7 @@ http.createServer(async (req, res) => {
       const st = store.getSettings(); if (!st.research_enabled) return send(res, 200, { none: true });
       const job = store.takeDoneJob(user.id); if (!job) return send(res, 200, { none: true, pending: store.countJobs(user.id) });
       const m = moodLib.decayed(store.loadMoodRow(user.id));
-      const system = SYSTEM + `\n\n話し相手のユーザー名は「${user.username}」。` + moodLib.guide(m, false, (store.loadMoodRow(user.id) || {}).impression);
+      const system = SYSTEM + `\n\n話し相手のユーザー名は「${user.username}」。` + moodLib.guide(m, false, (store.loadMoodRow(user.id) || {}).impression) + growth.note(growth.view(user.id).stage, growth.view(user.id).kind);
       const prompt = `(相手はいま話しかけていない。さっき「調べておくね」と約束したことを、調べ終わったので、ルミのほうから報告する。)\n調べたこと: ${job.query}\n調査結果:\n${job.result}\n` +
         'この調査結果だけを根拠に、ルミの口調で、1〜2文・80文字以内の短さで報告する。いちばん大事な1点だけを言う。結果にないことは言わない。確認できなかったら、そう一言で言う。URLや記号は言わない。actionsは[]。';
       let out; try { out = parseReply(await runCloudflare(prompt, [], system)); } catch (_) { out = { reply: `さっきの調べ物、わかったよ。${job.result.replace(/\s+/g, ' ').slice(0, 90)}`, emotion: 'happy' }; }
@@ -516,10 +523,10 @@ http.createServer(async (req, res) => {
       if (useWeather) lastWeatherTopic.set(user.id, Date.now());
       let ints = store.getInterests(user.id);
       if (!ints.list.length) { await Promise.race([extractInterests(user, true), new Promise(r => setTimeout(r, 3500))]); ints = store.getInterests(user.id); }
-      const n = useWeather ? { title: `今日の天気は${env.weather.desc}、気温${env.weather.temp}℃`, source: '天気', keyword: '天気' } : await news.pickNews(user.id, ints.list);
+      const n = useWeather ? { title: `今日の天気は${env.weather.desc}、気温${env.weather.temp}℃`, source: '天気', keyword: '天気' } : await news.pickNews(user.id, ints.list.length ? ints.list : growth.kindQueries(growth.view(user.id).kind));
       if (!n) return send(res, 200, { none: true });
       const m = moodLib.decayed(store.loadMoodRow(user.id));
-      const system = SYSTEM + `\n\n話し相手のユーザー名は「${user.username}」。` + moodLib.guide(m, false, (store.loadMoodRow(user.id) || {}).impression) + (env ? weather.block(env) : '');
+      const system = SYSTEM + `\n\n話し相手のユーザー名は「${user.username}」。` + moodLib.guide(m, false, (store.loadMoodRow(user.id) || {}).impression) + (env ? weather.block(env) : '') + growth.note(growth.view(user.id).stage, growth.view(user.id).kind);
       const stored = store.recentTurns(user.id, 6).flatMap(t => [{ role: 'user', text: t.user_text }, { role: 'ai', text: t.reply }]);
       const prompt = useWeather ? `(相手はいま話しかけていない。ルミのほうから、相手のいる場所の天気の話題を切り出す。)\n天気: ${env.weather.desc}、気温${env.weather.temp}℃(体感${env.weather.feels}℃)${env.weather.rainProb != null ? `、雨の確率${env.weather.rainProb}%` : ''}\nこの天気と気温に合った声かけ(傘・服装・飲み物・過ごし方など)を、ルミの口調で1〜3文で話しかける。地名は言わない。最後に相手のようすを軽く聞く。actionsは[]。` : `(相手はいま話しかけていない。ルミのほうから、ニュースの話題を切り出す。)\n見出し: 「${n.title}」${n.source ? `(${n.source})` : ''}${n.keyword ? `\n相手が興味を持っていそうなこと: ${n.keyword}` : ''}\n` +
         '見出しだけを根拠に、「そういえばこんなニュースがあったよ」と、ルミの口調で、1〜2文・70文字以内の短さで話しかける。見出しにない事実は作らない。断定せず「〜らしいよ」と伝える。actionsは[]。';
@@ -541,7 +548,7 @@ http.createServer(async (req, res) => {
       const mems = memory.recall(user.id, qvec);
       if (turn.askFeeling) await Promise.race([analyzeFeelings(user, turn.raw, true), new Promise(r => setTimeout(r, 3500))]);   // 聞かれたときは、最新の本音を作ってから答える
       const gr = growth.view(user.id), st = gr.stage;                                   // 成長段階(卵・ひかりのたま・ちびルミ・ルミ・ほしのルミ)で、話し方とできることが変わる
-      const system = growth.baseSystem(st, SYSTEM) + `\n\n話し相手のユーザー名は「${user.username}」。` + moodLib.guide(turn.raw, turn.refused, (store.loadMoodRow(user.id) || {}).impression, turn.attacked) + (store.getSettings().weather_enabled && growth.can.weather(st) ? weather.block(store.getEnv(user.id)) : '') + memory.block(mems) + (turn.askFeeling ? feelingBlock(user, turn.raw) : '') + growth.note(st);
+      const system = growth.baseSystem(st, SYSTEM) + `\n\n話し相手のユーザー名は「${user.username}」。` + moodLib.guide(turn.raw, turn.refused, (store.loadMoodRow(user.id) || {}).impression, turn.attacked) + (store.getSettings().weather_enabled && growth.can.weather(st) ? weather.block(store.getEnv(user.id)) : '') + memory.block(mems) + (turn.askFeeling ? feelingBlock(user, turn.raw) : '') + growth.note(st, gr.kind);
       const stored = store.recentTurns(user.id, 8).flatMap(t => [{ role: 'user', text: t.user_text }, { role: 'ai', text: t.reply }]);
       const hist = stored.length ? stored : history;                  // 会話履歴はサーバーに保存したものを使う(ページを開き直しても続く)
       let raw, via = 'cf';
@@ -577,7 +584,7 @@ http.createServer(async (req, res) => {
       if (turn.raw.anger >= 60 && ['neutral', 'happy'].includes(out.emotion)) out.emotion = 'angry';
       else if (turn.raw.sadness >= 60 && ['neutral', 'happy'].includes(out.emotion)) out.emotion = 'sad';
       out.mood = turn.mood; out.moodLabel = turn.moodLabel; out.stance = turn.stance; out.attacked = !!turn.attacked;
-      out.growth = growth.award(user.id, { manner: turn.manner, len: text.length, rate: store.getSettings().growth_rate });   // 会話するほど育つ(経験値)
+      out.growth = growth.award(user.id, { manner: turn.manner, genre: turn.genre, len: text.length, rate: store.getSettings().growth_rate });   // 会話するほど育つ(経験値)
       out.memories = mems.map(m => m.user_text.replace(/\s+/g, ' ').slice(0, 16));   // 思い出した言葉(画面で泡にする)
       bus.publish(user.id, user.username, 'reply', { text: out.reply, emotion: out.emotion, stance: out.stance });
       memory.remember(user.id, text.slice(0, 300), out.reply, out.emotion);   // 履歴に保存して、あとから思い出せるようにする

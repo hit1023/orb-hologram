@@ -212,7 +212,7 @@ export function createLumi3D({ width = 560, height = 720 } = {}) {
       case 'thinking': return s > 0 ? [-2.3, -s * 0.2] : [0, s * 0.15];
       case 'angry': return [0, s * 0.6];
       case 'sad': return [0, s * 0.34];
-      default: return talk ? [-0.5, s * (0.55 + talk * 0.2) + Math.sin(t * 6 + s) * 0.08] : [0, s * (0.4 + Math.sin(t * 1.7) * 0.03)];
+      default: return talk ? [-0.5, s * (0.55 + talk * 0.2) + Math.sin(t * 6 + s) * 0.08] : [0, s * (0.62 + Math.sin(t * 1.7) * 0.03)];
     }
   };
   // 電柱(怖がって隠れるときに、横からにゅっと出てくる)
@@ -279,8 +279,8 @@ export function createLumi3D({ width = 560, height = 720 } = {}) {
       const k = ov ? 0.3 : 0.18;
       piv.rotation.x = lerp(piv.rotation.x, rx, k); piv.rotation.z = lerp(piv.rotation.z, rz, k);
       // 頭が大きいので、腕をあげるときは肩を外側・手前に出して、頭の陰に隠れないようにする
-      piv.position.x = lerp(piv.position.x, s * (0.46 + ((ov && ov[2]) || 0)), 0.2);
-      piv.position.z = lerp(piv.position.z, (ov && ov[3]) || 0, 0.2);
+      piv.position.x = lerp(piv.position.x, s * (0.46 + (ov ? (ov[2] || 0) : 0.2)), 0.2);
+      piv.position.z = lerp(piv.position.z, ov ? (ov[3] || 0) : 0.22, 0.2);
     });
     const sig = [p.wink || '', p.eye, p.mouth, Math.round(p.open * 12), p.blink > 0.55 ? 1 : 0, Math.round(p.blush * 10), Math.round(p.brow * 8), Math.round(p.raise * 20), p.listening ? 1 : 0, p.tear ? Math.round(p.tear * 20) : 0, p.mouth === 'wavy' ? Math.round(t * 10) : 0].join('|');
     if (sig !== lastSig) { paintFace(fg, p); faceTex.needsUpdate = true; lastSig = sig; }

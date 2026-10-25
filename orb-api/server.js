@@ -13,6 +13,7 @@ const memory = require('./memory');
 const news = require('./news');
 const weather = require('./weather');
 const bus = require('./bus');
+const growth = require('./growth');
 const { runResearch } = require('./research');
 
 const PORT = +process.env.PORT || 3000;
@@ -287,7 +288,7 @@ function userTurn(user, text) {
     const after = moodLib.apply(before, an, store.getSettings().anger_gain / 100);
     store.saveMoodRow(user.id, after);
     bus.publish(user.id, user.username, 'mood', { mood: moodLib.round(after), stance: moodLib.stance(after), manner: an.manner });
-    const attacked = store.getSettings().guard_enabled === 1 && ['rude', 'intimidating'].includes(an.manner);   // 言葉で攻撃された(威圧・暴言)と感じた → 鎧でガード
+    const attacked = store.getSettings().guard_enabled === 1 && growth.can.guard(growth.view(user.id).stage) && ['rude', 'intimidating'].includes(an.manner);   // 言葉で攻撃された(威圧・暴言)と感じた → 鎧でガード
     const refused = !an.spontaneous && an.actions.some(a => !ALWAYS_OK.includes(a)) && moodLib.shouldRefuse(after);
     return { ...an, source, refused, attacked, actions: refused ? ['sulk'] : an.actions, mood: { ...moodLib.round(after), stance: moodLib.stance(after) }, moodLabel: moodLib.label(after), stance: moodLib.stance(after), raw: after };
   })();
@@ -398,7 +399,7 @@ http.createServer(async (req, res) => {
       const s = store.createSession(u.id);
       setCookie(res, req, s.token, s.maxAge);
       console.log(`[auth] login ${u.username}`);
-      return send(res, 200, { user: userView(u), mood: moodView(u.id), settings: store.getSettings() });
+      return send(res, 200, { user: userView(u), mood: moodView(u.id), settings: store.getSettings(), growth: growth.view(u.id) });
     }
     if (req.method === 'POST' && url === '/api/auth/logout') {
       store.deleteSession(cookieOf(req)); setCookie(res, req, '', 0); return send(res, 200, { ok: true });
@@ -408,7 +409,7 @@ http.createServer(async (req, res) => {
     }
     if (req.method === 'GET' && url === '/api/auth/me') {
       const u = currentUser(req); if (!u) return send(res, 401, { error: 'login required' });
-      return send(res, 200, { user: userView(u), mood: moodView(u.id), settings: store.getSettings() });
+      return send(res, 200, { user: userView(u), mood: moodView(u.id), settings: store.getSettings(), growth: growth.view(u.id) });
     }
     if (req.method === 'POST' && url === '/api/auth/password') {
       const u = currentUser(req); if (!u) return send(res, 401, { error: 'login required' });
@@ -442,14 +443,14 @@ http.createServer(async (req, res) => {
       if (req.method === 'GET' && url === '/api/admin/settings') return send(res, 200, { settings: store.getSettings() });
       if (req.method === 'POST' && url === '/api/admin/settings') { const b = await readJson(req); console.log(`[admin] ${me.username} が設定を変更 ${JSON.stringify(b)}`); return send(res, 200, { settings: store.setSettings(b) }); }
       if (req.method === 'GET' && url === '/api/admin/users')
-        return send(res, 200, { users: store.listUsers().map(u => ({ ...u, mood: moodView(u.id), turns: store.countTurns(u.id) })) });
+        return send(res, 200, { users: store.listUsers().map(u => ({ ...u, mood: moodView(u.id), turns: store.countTurns(u.id), growth: growth.view(u.id) })) });
       if (req.method === 'POST' && url === '/api/admin/users') {
         const { username, password, role } = await readJson(req);
         const u = store.createUser(String(username || '').trim(), password, role === 'admin' ? 'admin' : 'user');
         console.log(`[admin] ${me.username} がユーザー ${u.username} を作成`);
         return send(res, 200, { user: u });
       }
-      const m = url.match(/^\/api\/admin\/users\/(\d+)(?:\/(password|mood-reset|memory-clear))?$/);
+      const m = url.match(/^\/api\/admin\/users\/(\d+)(?:\/(password|mood-reset|memory-clear|growth))?$/);
       if (m) {
         const id = +m[1];
         if (req.method === 'DELETE' && !m[2]) {
@@ -462,6 +463,7 @@ http.createServer(async (req, res) => {
           return send(res, 200, { ok: true });
         }
         if (req.method === 'POST' && m[2] === 'mood-reset') { store.resetMood(id); return send(res, 200, { ok: true }); }
+        if (req.method === 'POST' && m[2] === 'growth') { const b = await readJson(req); return send(res, 200, { growth: growth.adminSet(id, b) }); }
         if (req.method === 'POST' && m[2] === 'memory-clear') return send(res, 200, { ok: true, deleted: memory.forget(id) });
       }
       return send(res, 404, { error: 'not found' });
@@ -501,13 +503,14 @@ http.createServer(async (req, res) => {
       store.markJobDelivered(job.id);
       store.addTurn(user.id, `（ルミから報告）${job.query}`.slice(0, 200), out.reply, out.emotion);
       let sources = []; try { sources = JSON.parse(job.sources || '[]'); } catch (_) {}
+      out.growth = growth.award(user.id, { bonus: 6, rate: store.getSettings().growth_rate });
       out.report = true; out.news = { title: job.query, source: '調べた結果', url: sources[0] || '' }; out.mood = { ...moodLib.round(m), stance: moodLib.stance(m) };
       console.log(`[report] ${user.username} #${job.id} -> ${out.reply.slice(0, 60)}`);
       bus.publish(user.id, user.username, 'report', { text: out.reply, query: job.query, sources });
       return send(res, 200, out);
     }
     if (req.method === 'POST' && url === '/api/topic') {                  // ルミから話題を出す: その人の興味に合うニュースを1つ選んで、自分から話しかける
-      const st = store.getSettings(); if (!st.topic_enabled) return send(res, 200, { none: true, disabled: true });
+      const st = store.getSettings(); if (!st.topic_enabled || !growth.can.topic(growth.view(user.id).stage)) return send(res, 200, { none: true, disabled: true });
       const t0 = Date.now(), env = st.weather_enabled ? store.getEnv(user.id) : null;
       const useWeather = !!env && Date.now() - env.updated_at < 3 * 3600 * 1000 && Date.now() - (lastWeatherTopic.get(user.id) || 0) > 3 * 3600 * 1000 && Math.random() < 0.5;   // 天気の話題は3時間に1回まで
       if (useWeather) lastWeatherTopic.set(user.id, Date.now());
@@ -524,6 +527,7 @@ http.createServer(async (req, res) => {
       const out = parseReply(raw); out.actions = []; out.reply = shorten(out.reply, 2, 110);
       if (m.anger >= 60 && ['neutral', 'happy'].includes(out.emotion)) out.emotion = 'angry';
       store.addTurn(user.id, `（ルミから話題）${n.title}`.slice(0, 200), out.reply, out.emotion);
+      out.growth = growth.award(user.id, { bonus: 1, rate: store.getSettings().growth_rate });
       out.news = { title: n.title, source: n.source, keyword: n.keyword || '' }; out.mood = { ...moodLib.round(m), stance: moodLib.stance(m) };
       console.log(`[topic] ${user.username} ${Date.now() - t0}ms kw=${n.keyword || '-'} ${n.title.slice(0, 40)} -> ${out.reply.slice(0, 60)}`);
       return send(res, 200, out);
@@ -536,11 +540,13 @@ http.createServer(async (req, res) => {
       const [turn, qvec] = await Promise.all([userTurn(user, text.slice(0, 300)), memory.embedQuery(text.slice(0, 300))]);
       const mems = memory.recall(user.id, qvec);
       if (turn.askFeeling) await Promise.race([analyzeFeelings(user, turn.raw, true), new Promise(r => setTimeout(r, 3500))]);   // 聞かれたときは、最新の本音を作ってから答える
-      const system = SYSTEM + `\n\n話し相手のユーザー名は「${user.username}」。` + moodLib.guide(turn.raw, turn.refused, (store.loadMoodRow(user.id) || {}).impression, turn.attacked) + (store.getSettings().weather_enabled ? weather.block(store.getEnv(user.id)) : '') + memory.block(mems) + (turn.askFeeling ? feelingBlock(user, turn.raw) : '');
+      const gr = growth.view(user.id), st = gr.stage;                                   // 成長段階(卵・ひかりのたま・ちびルミ・ルミ・ほしのルミ)で、話し方とできることが変わる
+      const system = growth.baseSystem(st, SYSTEM) + `\n\n話し相手のユーザー名は「${user.username}」。` + moodLib.guide(turn.raw, turn.refused, (store.loadMoodRow(user.id) || {}).impression, turn.attacked) + (store.getSettings().weather_enabled && growth.can.weather(st) ? weather.block(store.getEnv(user.id)) : '') + memory.block(mems) + (turn.askFeeling ? feelingBlock(user, turn.raw) : '') + growth.note(st);
       const stored = store.recentTurns(user.id, 8).flatMap(t => [{ role: 'user', text: t.user_text }, { role: 'ai', text: t.reply }]);
       const hist = stored.length ? stored : history;                  // 会話履歴はサーバーに保存したものを使う(ページを開き直しても続く)
       let raw, via = 'cf';
-      try {
+      if (st === 0) { raw = JSON.stringify(growth.eggReply(turn.raw)); via = 'egg'; }           // 卵は話せない(ゆれる・光る音だけ)
+      else try {
         if (!CF_ACCOUNT || !CF_TOKEN) throw new Error('no cloudflare key');
         raw = await runCloudflare(text.slice(0, 500), hist, system);
       } catch (e) {
@@ -548,7 +554,9 @@ http.createServer(async (req, res) => {
         via = 'claude'; raw = await runClaude(buildPrompt(text.slice(0, 500), hist), system);
       }
       const out = parseReply(raw);
+      if (st < 3) out.research = '';                                                  // 調べ物はルミになってから
       if (turn.refused) out.actions = ['sulk'];
+      out.actions = growth.filterActions(st, out.actions);
       let rq = out.research || '';                                                  // あとで調べて報告する
       out.researching = false;
       const enqueue = (q) => {
@@ -557,7 +565,7 @@ http.createServer(async (req, res) => {
         bus.publish(user.id, user.username, 'research_queued', { id, query: q }); setTimeout(() => researchTick().catch(() => {}), 200); return true;
       };
       if (rq) out.researching = enqueue(rq);
-      else if (/(調べて(み|お)る|調べておく|あとで教え|後で教え)/.test(out.reply)) {      // 「調べるね」と言ったのに依頼が空 → 会話の流れから、具体的な調べ物を短く抜き出す(あいまいなら作らない)
+      else if (growth.can.research(st) && /(調べて(み|お)る|調べておく|あとで教え|後で教え)/.test(out.reply)) {      // 「調べるね」と言ったのに依頼が空 → 会話の流れから、具体的な調べ物を短く抜き出す(あいまいなら作らない)
         const ctx = hist.slice(-4).map(h => `${h.role === 'user' ? '相手' : 'ルミ'}: ${String(h.text).slice(0, 80)}`).join('\n') + `\n相手: ${text.slice(0, 120)}\nルミ: ${out.reply.slice(0, 120)}`;
         cfText('会話の流れから、ルミが「調べておく」と約束した具体的な調べ物を、Web検索に使える短い日本語(30字以内)で1つだけ書く。具体的な調べ物がない・あいまいなときは「なし」とだけ書く。', ctx, 60)
           .then(q => { q = (q || '').trim().replace(/^["「『]|["」』]$/g, ''); if (q && !/^なし/.test(q) && q.length <= 40) enqueue(q); }).catch(() => {});
@@ -566,6 +574,7 @@ http.createServer(async (req, res) => {
       if (turn.raw.anger >= 60 && ['neutral', 'happy'].includes(out.emotion)) out.emotion = 'angry';
       else if (turn.raw.sadness >= 60 && ['neutral', 'happy'].includes(out.emotion)) out.emotion = 'sad';
       out.mood = turn.mood; out.moodLabel = turn.moodLabel; out.stance = turn.stance; out.attacked = !!turn.attacked;
+      out.growth = growth.award(user.id, { manner: turn.manner, len: text.length, rate: store.getSettings().growth_rate });   // 会話するほど育つ(経験値)
       out.memories = mems.map(m => m.user_text.replace(/\s+/g, ' ').slice(0, 16));   // 思い出した言葉(画面で泡にする)
       bus.publish(user.id, user.username, 'reply', { text: out.reply, emotion: out.emotion, stance: out.stance });
       memory.remember(user.id, text.slice(0, 300), out.reply, out.emotion);   // 履歴に保存して、あとから思い出せるようにする
@@ -580,7 +589,8 @@ http.createServer(async (req, res) => {
       const t0 = Date.now();
       const t = await userTurn(user, text.slice(0, 300));
       console.log(`[act] ${user.username} ${Date.now() - t0}ms [${t.actions}]${t.spontaneous ? ' (自然な反応)' : ''}${t.refused ? ' (ことわった)' : ''} ${t.manner}/${t.topic} mood=${t.mood.joy}/${t.mood.anger}/${t.mood.sadness}`);
-      return send(res, 200, { actions: t.actions, spontaneous: t.spontaneous, refused: t.refused, askFeeling: !!t.askFeeling, attacked: !!t.attacked, source: t.source, manner: t.manner, mood: t.mood, moodLabel: t.moodLabel, stance: t.stance });
+      const stNow = growth.view(user.id).stage;
+      return send(res, 200, { actions: growth.filterActions(stNow, t.actions), spontaneous: t.spontaneous, refused: t.refused, askFeeling: !!t.askFeeling, attacked: !!t.attacked, source: t.source, manner: t.manner, mood: t.mood, moodLabel: t.moodLabel, stance: t.stance });
     }
     if (req.method === 'POST' && url === '/api/tts') {
       const { text, emotion } = await readJson(req);

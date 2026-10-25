@@ -180,6 +180,28 @@ export function createLumi3D({ width = 560, height = 720 } = {}) {
     arms.push({ piv, s });
   }
 
+  // 成長の姿: たまご(ひび割れが進む) / ひかりのたま / ちびルミ(小さく・頭が大きい) / ほしのルミ(光の輪)
+  const egg = new THREE.Group(); egg.position.set(0, 1.25, 0); root.add(egg); egg.visible = false;
+  const eggShell = mesh(new THREE.SphereGeometry(1, 40, 32), new THREE.MeshToonMaterial({ color: 0xfff1d0, gradientMap: grad, emissive: 0x7a6430, emissiveIntensity: 0.55 }), egg);
+  eggShell.scale.set(0.95, 1.25, 0.95);
+  for (const [x, y, z, r, c] of [[0.5, 0.3, 0.78, 0.22, 0xff9ec8], [-0.55, -0.1, 0.74, 0.26, 0x9fe8d0], [0.1, -0.65, 0.8, 0.2, 0xffe27a], [-0.3, 0.75, 0.6, 0.18, 0xa9b8ff], [0.7, -0.3, 0.55, 0.2, 0xff9ec8]]) {
+    const sp = mesh(new THREE.SphereGeometry(r, 14, 10), new THREE.MeshToonMaterial({ color: c, gradientMap: grad, emissive: c, emissiveIntensity: 0.25 }), egg, x, y, z); sp.scale.set(1, 1, 0.45);
+    sp.lookAt(new THREE.Vector3(x * 2, y * 1.4, z * 2));
+  }
+  const crackMat = new THREE.MeshBasicMaterial({ color: 0xffe27a });                                 // ひびは、中の光がもれているように明るく(板では黒が透明なので)
+  const cracks = [[0.15, 0.4, 0.92, 0.5, 0.55], [-0.25, 0.0, 0.94, -0.7, 0.62], [0.2, -0.45, 0.9, 0.3, 0.5]].map(([x, y, z, rz, len]) => { const c = mesh(new THREE.BoxGeometry(len, 0.06, 0.05), crackMat, egg, x, y, z); c.rotation.z = rz; c.visible = false; return c; });
+  const orb = new THREE.Group(); orb.position.set(0, 1.35, 0); root.add(orb); orb.visible = false;
+  mesh(new THREE.SphereGeometry(1, 40, 32), new THREE.MeshToonMaterial({ color: 0xb8f4ff, gradientMap: grad, emissive: 0x58d4e8, emissiveIntensity: 0.9 }), orb);
+  const orbEyes = [];
+  for (const sx of [-1, 1]) {
+    const ew = mesh(new THREE.SphereGeometry(0.17, 16, 12), new THREE.MeshBasicMaterial({ color: 0xffffff }), orb, sx * 0.36, 0.12, 0.88); ew.scale.set(1, 1, 0.5);
+    mesh(new THREE.SphereGeometry(0.09, 12, 10), new THREE.MeshBasicMaterial({ color: 0x2b3a8c }), orb, sx * 0.36, 0.1, 0.99);
+    mesh(new THREE.SphereGeometry(0.16, 12, 10), new THREE.MeshBasicMaterial({ color: 0xff9ec8, transparent: true, opacity: 0.7 }), orb, sx * 0.62, -0.1, 0.74).scale.set(1, 0.6, 0.4);
+    orbEyes.push(ew);
+  }
+  mesh(new THREE.SphereGeometry(0.1, 12, 10), new THREE.MeshBasicMaterial({ color: 0xff7aa8 }), orb, 0, -0.2, 0.93).scale.set(1.3, 0.7, 0.5);
+  const halo = mesh(new THREE.TorusGeometry(0.62, 0.055, 10, 48), new THREE.MeshToonMaterial({ color: 0xffe27a, gradientMap: grad, emissive: 0xc9a020, emissiveIntensity: 0.9 }), head, 0, 1.62, 0); halo.rotation.x = Math.PI / 2 + 0.25; halo.visible = false;
+
   // めがね(分析のとき): 顔の前にかけて、ぽんっと出る。ホログラム板では黒が透明なので、明るい色にする
   const glasses = new THREE.Group(); glasses.position.set(0, -0.02, 1.0); head.add(glasses); glasses.visible = false;
   const gfMat = new THREE.MeshBasicMaterial({ color: 0xffd23f }), glMat = new THREE.MeshBasicMaterial({ color: 0xa8ecff, transparent: true, opacity: 0.2, depthWrite: false });
@@ -292,7 +314,8 @@ export function createLumi3D({ width = 560, height = 720 } = {}) {
   function render(p) {
     const t = p.time;
     const fx = p.fx || {};                           // 声の指示による動き(index.html の動きエンジンが作る)
-    const sr = Math.sin(Math.min(fx.roll || 0, 1.6));    // 横になる(寝る・気絶)ときは、画面の中央に収まるよう寄せて、引く
+    const sr = Math.sin(Math.min(fx.roll || 0, 1.6));
+    const st = Math.max(0, Math.min(4, p.stage === undefined ? 3 : p.stage));                            // 成長段階 0=たまご 1=ひかりのたま 2=ちびルミ 3=ルミ 4=ほしのルミ    // 横になる(寝る・気絶)ときは、画面の中央に収まるよう寄せて、引く
     root.rotation.set(fx.bodyPitch || 0, p.spin + (fx.spinAdd || 0), fx.roll || 0);
     root.position.x = sr * 2.1 + (fx.hide || 0) * 0.45 + (fx.shakeX || 0);
     const ba = Math.max(0, Math.min(1, ((fx.bed || 0) - 0.3) / 0.7));              // 寝具が湧く量(ぽよんと弾みながら)
@@ -306,7 +329,7 @@ export function createLumi3D({ width = 560, height = 720 } = {}) {
       o.g.rotation.z = Math.sin(t * 2 + o.ph) * 0.18; o.g.scale.setScalar(o.base * Math.min(1, (pa - 0.15) * 1.6));
     });
     pole.visible = pa > 0.01; pole.position.set(4.4 - 3.4 * (1 - Math.pow(1 - pa, 3)), 0, 1.3);
-    root.scale.set(1, 1 - (fx.squash || 0), 1);
+    { const sf = [1, 1, 0.74, 1, 1.05][st]; root.scale.set(sf, sf * (1 - (fx.squash || 0)), sf); }
     camera.position.z = 10.6 + (fx.jump || 0) * 2.0 + Math.abs(sr) * 3.2;     // 跳ぶときは少し引いて、画面の上に突き抜けないようにする(高く跳んで見える)
     root.position.y = Math.sin(t * 1.8) * 0.06 + (p.pose === 'happy' ? Math.abs(Math.sin(t * 5)) * 0.06 : 0) + (fx.jump || 0) + Math.abs(sr) * 1.0;
     head.rotation.set(0.05 + Math.sin(t * 1.3) * 0.02 + (fx.pitch || 0), fx.yaw || 0, p.tilt + Math.sin(t * 1.7) * 0.02 + (fx.headRoll || 0));
@@ -335,6 +358,20 @@ export function createLumi3D({ width = 560, height = 720 } = {}) {
       pen.position.set(0.12 + Math.sin(wr) * 0.14, 0.72 + Math.cos(wr * 0.5) * 0.06 - (1 - an) * 0.3, 1.0); pen.rotation.set(-0.5, 0, -0.5);
       pen.scale.setScalar(an); penTip.scale.setScalar(0.7 + Math.abs(Math.sin(wr)) * 0.8);
     }
+    head.visible = body.visible = st >= 2; egg.visible = st === 0; orb.visible = st === 1; halo.visible = st >= 4;   // 成長段階で、姿が変わる
+    head.scale.setScalar(st === 2 ? 1.14 : 1); body.scale.setScalar(st === 2 ? 0.9 : 1);                    // ちびルミは、頭が大きく見える
+    if (st === 0) {                                                                                         // たまご: ゆれて、光って、ひびが進む
+      const cr = p.crack || 0;
+      egg.rotation.z = Math.sin(t * 3.2) * (0.05 + cr * 0.18); egg.rotation.x = Math.sin(t * 2.1 + 1) * 0.03;
+      egg.position.y = 1.25 + Math.abs(Math.sin(t * 2.4)) * 0.04 * (1 + cr * 2);
+      eggShell.material.emissiveIntensity = 0.5 + (p.talk || 0) * 0.9 + Math.sin(t * 2) * 0.1;
+      cracks.forEach((c, i) => { c.visible = cr > [0.33, 0.6, 0.85][i]; });
+    }
+    if (st === 1) {                                                                                         // ひかりのたま: ぷよぷよ脈打つ
+      orb.scale.setScalar(1 + Math.sin(t * 2.2) * 0.04 + (p.talk || 0) * 0.12); orb.position.y = 1.35 + Math.sin(t * 1.6) * 0.1;
+      orbEyes.forEach((e) => e.scale.y = 1 - (p.blink || 0) * 0.9);
+    }
+    if (st >= 4) halo.rotation.z = t * 0.9;
     const gd = fx.guard || 0;                                          // ガード: 鎧とたてが、ぱっと出る
     armor.visible = tiara.visible = gd > 0.02;
     if (gd > 0.02) {

@@ -80,6 +80,7 @@
       <span class="mb">💗<i><b id="mbF" style="background:#f8a"></b></i></span>
     </span>
     <button id="jobBadge" class="sm" style="display:none" title="調べ物の状況">🔎</button>
+    <span id="gBadge" class="mb" title="" style="gap:5px;font-size:13px"><span id="gTxt">⭐ ルミ</span><i style="width:46px"><b id="gBar" style="background:#8f8"></b></i></span>
     <span id="wx" title=""></span>
     <button id="geoBtn" class="sm" title="位置情報から、いまの天気と気温をルミが知る(約1kmに丸めて使います)">位置: ON</button>
     <button id="adminBtn" class="sm" style="display:none">管理</button>
@@ -106,6 +107,7 @@
     <div class="row" style="justify-content:flex-end"><button type="button" id="pwCancel" class="sm">キャンセル</button><button type="submit" class="primary sm">OK</button></div>
   </form>
 </div>
+<div id="flash" style="position:fixed;inset:0;background:#fff;opacity:0;pointer-events:none;z-index:15;transition:opacity 1.1s ease-out"></div>
 <div id="jobs" class="overlay" hidden>
   <div class="card wide">
     <div class="row" style="justify-content:space-between"><h1>調べ物</h1><span><button id="jobsClear" class="sm">履歴を消す</button> <button id="jobsClose" class="sm">閉じる</button></span></div>
@@ -123,6 +125,7 @@
       <div class="row"><label>最初の話題まで <input id="sFirst" type="number" min="10" max="3600" style="width:84px"> 秒</label><label>話題の間隔 <input id="sInt" type="number" min="30" max="86400" style="width:96px"> 秒</label></div>
       <label><input type="checkbox" id="sWeather"> 位置情報から天気・気温を把握する</label>
       <label><input type="checkbox" id="sGuard"> 威圧されたら鎧でガードする</label>
+      <label>成長の速さ <input id="sGrow" type="number" min="20" max="500" step="10" style="width:84px"> %(100=ふつう)</label>
       <label>怒りやすさ <input id="sGain" type="number" min="50" max="300" step="10" style="width:84px"> %(100=ふつう、大きいほど、すぐ怒る)</label>
       <label>パーティクル量 <select id="sPart"><option value="1">少</option><option value="2">ふつう</option><option value="3">多</option></select></label>
       <div class="row"><button id="sSave" class="primary sm" type="button">設定を保存</button><span id="sMsg" class="err ok"></span></div>
@@ -739,10 +742,14 @@ const PT_EMIT = { banzai: { confetti: 30 }, cheer: { confetti: 32, star: 14 }, g
   cry: { drop: 24 }, shy: { heart: 6 }, sparkle: { star: 46 }, kiss: { heart: 9 }, heart: { heart: 12 }, jump: { star: 34 }, hop: { star: 16 }, sleep: { zzz: 2.2 }, angry: { steam: 22 }, sulk: { steam: 8 },
   scared: { drop: 10 }, shiver: { drop: 8 }, faint: { star: 16 }, wave: { star: 10 }, clap: { star: 20 }, peace: { star: 18 }, analyze: { sym: 20, dot: 18 }, guard: { hex: 30, spark: 16 } };
 let actQueue = [], actCur = null, curFx = null, actFrame = -1;
+// 成長段階で、できる動きが変わる(卵・ひかりのたま=ゆれるだけ / ちびルミ=基本の動き / ルミ以上=ぜんぶ。サーバーと同じ)
+const ACT_BASIC = ['wave', 'nod', 'tilt_head', 'sway', 'jump', 'hop', 'look_around', 'sparkle', 'shy', 'laugh', 'cry', 'bow', 'spin', 'yawn', 'sit', 'surprise', 'shake_head', 'heart', 'scared', 'guard', 'lower', 'sulk', 'banzai', 'raise_both', 'cheer', 'clap'];
+const ACT_TINY = ['sparkle', 'sway', 'tilt_head', 'nod', 'look_around'];
+const actionAllowed = (a) => G.stage >= 3 ? true : G.stage === 2 ? ACT_BASIC.includes(a) : ACT_TINY.includes(a);
 function playActions(list) {
   list = Array.isArray(list) ? list : [];
   if (list.includes('lower')) { actQueue = []; actCur = null; return; }   // 「手を下げて」: 動きを止めて、すぐ元の姿勢に戻す
-  actQueue = list.filter(a => ACT_DUR[a] !== undefined).slice(0, 4); actCur = null;
+  actQueue = list.filter(a => ACT_DUR[a] !== undefined && actionAllowed(a)).slice(0, 4); actCur = null;
 }
 const easeIO = x => x < 0.5 ? 2 * x * x : 1 - Math.pow(-2 * x + 2, 2) / 2;
 function actPose(n, u, d) {
@@ -978,7 +985,7 @@ function drawMascot3D(R, time, view = 0) {
   const { fx, key, e, lv, blink, speaking } = M3;
   const cvs = L.render({
     time, spin: spin3 + ((state === 'idle') ? Math.sin(time * 0.8) * 0.3 : 0) + view * (Math.PI / 2) * pyrDir, pose: key, eye: e.eye, mouth: (fx && fx.mouth) || e.mouth, wink: fx && fx.wink, open: (fx && fx.open !== undefined) ? fx.open : (speaking ? Math.max(0.1, lv) : 0),
-    fx, blink: (fx && fx.closeEyes) ? 1 : blink, blush: mc.blush, brow: mc.brow, raise: mc.raise, tilt: mc.tilt, listening: state === 'listening',
+    stage: G.stage, crack: G.progress, fx, blink: (fx && fx.closeEyes) ? 1 : blink, blush: mc.blush, brow: mc.brow, raise: mc.raise, tilt: mc.tilt, listening: state === 'listening',
     talk: speaking ? 0.5 + lv : 0, tear: key === 'sad' ? 1 - ((time * 0.5) % 1) * 0.8 : (fx && fx.sweat ? 1 - ((time * 1.3) % 1) * 0.8 : 0),
   });
   ctx.save();
@@ -1061,7 +1068,8 @@ const chatHistory = [];     // {role:'user'|'ai', text}
 let emotion = 'neutral';
 let emotionTimer = null;
 let lastUserText = '';
-let S = { anger_gain: 150, research_enabled: 1, topic_enabled: 1, topic_first_sec: 75, topic_interval_sec: 240, weather_enabled: 1, guard_enabled: 1, particle_level: 2 };   // 管理メニューで決める設定(サーバーから受け取る)
+let G = { stage: 3, name: 'ルミ', icon: '⭐', xp: 0, next: null, progress: 1, streak: 0 }, gInit = false;   // 成長(たまごっち): 会話を重ねるほど育つ
+let S = { growth_rate: 100, anger_gain: 150, research_enabled: 1, topic_enabled: 1, topic_first_sec: 75, topic_interval_sec: 240, weather_enabled: 1, guard_enabled: 1, particle_level: 2 };   // 管理メニューで決める設定(サーバーから受け取る)
 let lastAct = performance.now();   // 最後にやりとりした時刻(しばらく静かなら、ルミから話題を出す)
 let me = null, mood = { joy: 50, anger: 0, sadness: 0, affinity: 50 };   // ログイン中のユーザーと、ルミの気分(サーバーが話しかけ方から更新する)
 const baseEmo = () => mood.anger >= 45 ? 'angry' : mood.sadness >= 50 ? 'sad' : mood.joy >= 80 ? 'happy' : 'neutral';   // 何も話していないときの顔つき
@@ -1211,10 +1219,10 @@ async function handleUtterance(text) {
   ensureAudio();
   const myTurn = ++turn; lastUserText = text; lastAct = performance.now();
   setState('thinking'); level = 0; log('あなた: ' + text); setUserCap(text, false);
-  const faAll = fastActions(text), hold = mood.anger >= 50 && faAll.length > 0;   // 不機嫌なときは、サーバーの判断(ことわるかも)を待ってから動く
-  const fa = hold ? [] : faAll, ana = ASK_FEELING_RX.test(text);
+  const faAll = G.stage >= 2 ? fastActions(text) : [], hold = mood.anger >= 50 && faAll.length > 0;   // 不機嫌なときは、サーバーの判断(ことわるかも)を待ってから動く
+  const fa = hold ? [] : faAll, ana = G.stage >= 3 && ASK_FEELING_RX.test(text);
   fastPlayed = fa.join(','); actDecided = false;
-  if (S.guard_enabled && ATTACK_RX.test(text)) { playActions(['guard']); fastPlayed = 'guard'; }               // 威圧されたら、すぐ鎧でガード
+  if (S.guard_enabled && G.stage >= 2 && ATTACK_RX.test(text)) { playActions(['guard']); fastPlayed = 'guard'; }               // 威圧されたら、すぐ鎧でガード
   else if (fa.length) playActions(fa);                                                   // すぐ動き始める
   else if (ana) { playActions(['analyze']); fastPlayed = 'analyze'; }              // 気持ちを聞かれたら、めがねで分析
   fetch(CONFIG.actEndpoint, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ text }) })   // 動きの判断(Jev)を、返答の生成と並べて呼ぶ
@@ -1238,7 +1246,7 @@ async function handleUtterance(text) {
     chatHistory.push({ role: 'user', text }, { role: 'ai', text: out.reply });
     return speak(out.reply, out.emotion, out.actions);
   }
-  try { out = await getReply(text); if (out.memories && out.memories.length) memoryBubbles(out.memories); if (out.researching) { log('🔎 調べ物を受け付けました'); refreshJobs(); } } catch (e) { out = { reply: 'ごめんね、うまくつながらなかったみたい。', emotion: 'sad' }; }
+  try { out = await getReply(text); if (out.memories && out.memories.length) memoryBubbles(out.memories); if (out.researching) { log('🔎 調べ物を受け付けました'); refreshJobs(); } if (out.growth) setGrowth(out.growth); } catch (e) { out = { reply: 'ごめんね、うまくつながらなかったみたい。', emotion: 'sad' }; }
   if (myTurn !== turn) return;                          // 返事を待つ間に割り込まれた
   chatHistory.push({ role: 'user', text }, { role: 'ai', text: out.reply });
   while (chatHistory.length > 16) chatHistory.shift();
@@ -1357,7 +1365,7 @@ function showLogin(msg) {
 function applyAuth(j) {
   me = j.user; $('login').hidden = true; $('lgPass').value = '';
   $('meName').textContent = '👤 ' + me.username; $('adminBtn').style.display = me.role === 'admin' ? '' : 'none';
-  $('who').classList.add('on'); setMood(j.mood); applySettings(j.settings); startGeo(false); startEvents(); if (!jobsAt) refreshJobs();
+  $('who').classList.add('on'); setMood(j.mood); applySettings(j.settings); startGeo(false); startEvents(); if (!jobsAt) refreshJobs(); if (j.growth) setGrowth(j.growth);
 }
 $('loginForm').addEventListener('submit', async (e) => {
   e.preventDefault(); $('lgErr').textContent = '';
@@ -1419,7 +1427,7 @@ setInterval(async () => {
   try {
     const r = await jsend('POST', '/api/topic', {}); const j = await r.json();
     if (r.ok && j.reply && !j.none && topicQuiet() && performance.now() - lastAct < 30000) {
-      topicCount++; setMood(j.mood); chatHistory.push({ role: 'ai', text: j.reply });
+      topicCount++; setMood(j.mood); if (j.growth) setGrowth(j.growth); chatHistory.push({ role: 'ai', text: j.reply });
       log('📰 ' + j.news.title + (j.news.source ? ' - ' + j.news.source : '')); speak(j.reply, j.emotion, []);
     }
   } catch (_) {} finally { topicBusy = false; }
@@ -1485,11 +1493,33 @@ setInterval(async () => {
   try {
     const r = await jsend('POST', '/api/report', {}); const j = await r.json();
     if (r.ok && j.reply && !j.none && topicQuiet()) {
-      setMood(j.mood); chatHistory.push({ role: 'ai', text: j.reply }); lastAct = performance.now();
+      setMood(j.mood); if (j.growth) setGrowth(j.growth); chatHistory.push({ role: 'ai', text: j.reply }); lastAct = performance.now();
       log('🔎 調べた結果: ' + j.news.title); speak(j.reply, j.emotion, []); reportPending = true;      // ほかにも終わったものがあるかもしれない
     }
   } catch (_) {} finally { reportBusy = false; }
 }, 3000);
+
+// --- 成長(たまごっち): 経験値・段階の表示と、進化のお祝い ---
+function setGrowth(g) {
+  if (!g || typeof g.stage !== 'number') return;
+  const evolved = g.evolved || (gInit && g.stage > G.stage ? { from: G.stage, to: g.stage, toName: g.name } : null);
+  G = { stage: g.stage, name: g.name, icon: g.icon, xp: g.xp, next: g.next, nextName: g.nextName, progress: g.progress, streak: g.streak || 0 };
+  gInit = true;
+  $('gTxt').textContent = `${g.icon} ${g.name}`;
+  $('gBar').style.width = Math.round(g.progress * 100) + '%';
+  $('gBadge').title = `${g.name}  経験値 ${g.xp}` + (g.next ? `(あと ${g.next - g.xp} で「${g.nextName}」)` : '(いちばん育ちました)') + (g.streak > 1 ? `  ${g.streak}日連続` : '');
+  if (evolved) evolveCeremony(evolved);
+}
+function evolveCeremony(ev) {
+  const fl = $('flash'); fl.style.transition = 'none'; fl.style.opacity = '0.9'; requestAnimationFrame(() => { fl.style.transition = 'opacity 1.1s ease-out'; fl.style.opacity = '0'; });
+  for (let i = 0; i < 70; i++) ptSpawn('confetti', { x: rnd(-1.6, 1.6), y: rnd(-0.6, 0.8), vx: rnd(-1.4, 1.4), vy: -rnd(0.4, 1.8), g: 1.3, life: rnd(2.2, 3.6), size: rnd(0.07, 0.14), h: ev.from === 0 ? rnd(35, 55) : rnd(0, 360), s: 90, l: ev.from === 0 ? 88 : 65, rot: rnd(0, 6), vr: rnd(-8, 8), front: true });
+  for (let i = 0; i < 30; i++) ptSpawn('star', { x: rnd(-1.2, 1.2), y: rnd(-1, 1), vx: rnd(-1.2, 1.2), vy: rnd(-1.2, 1.2), life: rnd(0.8, 1.8), size: rnd(0.06, 0.16), h: 50, s: 100, l: 85, rot: rnd(0, 6), front: true });
+  log(ev.from === 0 ? '🥚 たまごが、孵化した！' : `🎉 ${ev.toName} に育った！`);
+  const lines = { 1: 'ぴかっ！', 2: 'ことば、おぼえたよ！', 3: 'わぁ、ルミになったよ！ありがとう！', 4: 'なんだか、星みたいに光ってる……' };
+  setTimeout(() => { if (state === 'idle' && actx && actx.state === 'running') speak(lines[ev.to] || '', 'happy', []); }, 1400);
+  if (ev.to >= 2) setTimeout(() => playActions(['jump']), 300);
+}
+setInterval(() => { if (G.stage >= 4 && Math.random() < 0.5) { const a = rnd(0, 6.283); ptSpawn('star', { orb: 1, ang: a, rad: rnd(1.3, 2.0), dr: 0, w: rnd(0.3, 0.7), cx: 0, cy: -0.1, life: rnd(2.5, 4), size: rnd(0.04, 0.1), h: rnd(40, 55), s: 100, l: 80, rot: rnd(0, 6) }); } if (G.stage === 0 && Math.random() < G.progress) ptSpawn('star', { x: rnd(-0.5, 0.5), y: rnd(-0.2, 0.9), vy: -rnd(0.1, 0.4), life: rnd(0.6, 1.2), size: rnd(0.03, 0.07), h: 48, s: 100, l: 85, rot: rnd(0, 6), front: true }); }, 250);
 
 // --- 管理メニューで決める設定(ルミから話題・天気・ガード・パーティクル量) ---
 function applySettings(st) {
@@ -1499,11 +1529,11 @@ function applySettings(st) {
 }
 async function loadSettingsForm() {
   const r = await jsend('GET', '/api/admin/settings'); if (!r.ok) return; const { settings: st } = await r.json();
-  $('sGain').value = st.anger_gain; $('sResearch').checked = !!st.research_enabled; $('sTopic').checked = !!st.topic_enabled; $('sFirst').value = st.topic_first_sec; $('sInt').value = st.topic_interval_sec;
+  $('sGrow').value = st.growth_rate; $('sGain').value = st.anger_gain; $('sResearch').checked = !!st.research_enabled; $('sTopic').checked = !!st.topic_enabled; $('sFirst').value = st.topic_first_sec; $('sInt').value = st.topic_interval_sec;
   $('sWeather').checked = !!st.weather_enabled; $('sGuard').checked = !!st.guard_enabled; $('sPart').value = String(st.particle_level);
 }
 $('sSave').onclick = async () => {
-  const body = { anger_gain: +$('sGain').value, research_enabled: $('sResearch').checked ? 1 : 0, topic_enabled: $('sTopic').checked ? 1 : 0, topic_first_sec: +$('sFirst').value, topic_interval_sec: +$('sInt').value, weather_enabled: $('sWeather').checked ? 1 : 0, guard_enabled: $('sGuard').checked ? 1 : 0, particle_level: +$('sPart').value };
+  const body = { growth_rate: +$('sGrow').value, anger_gain: +$('sGain').value, research_enabled: $('sResearch').checked ? 1 : 0, topic_enabled: $('sTopic').checked ? 1 : 0, topic_first_sec: +$('sFirst').value, topic_interval_sec: +$('sInt').value, weather_enabled: $('sWeather').checked ? 1 : 0, guard_enabled: $('sGuard').checked ? 1 : 0, particle_level: +$('sPart').value };
   const r = await jsend('POST', '/api/admin/settings', body); const j = await r.json();
   $('sMsg').textContent = r.ok ? '保存しました' : (j.error || '保存できませんでした'); if (r.ok) { applySettings(j.settings); loadSettingsForm(); startGeo(true); }
   setTimeout(() => { $('sMsg').textContent = ''; }, 3000);
@@ -1542,6 +1572,9 @@ async function loadUsers() {
       const rr = await jsend('POST', `/api/admin/users/${u.id}/password`, { password: pw }); const jj = await rr.json();
       $('adMsg').className = 'err' + (rr.ok ? ' ok' : ''); $('adMsg').textContent = rr.ok ? `${u.username} のパスワードを変えました` : jj.error;
     });
+    mk('成長+50', '', async () => { await jsend('POST', `/api/admin/users/${u.id}/growth`, { add: 50 }); loadUsers(); });
+    mk('次の段階へ', '', async () => { await jsend('POST', `/api/admin/users/${u.id}/growth`, { stage: Math.min(4, u.growth.stage + 1) }); loadUsers(); });
+    mk('たまごに戻す', '', async () => { if (!confirm(`${u.username} の成長を、たまごに戻しますか?`)) return; await jsend('POST', `/api/admin/users/${u.id}/growth`, { reset: true }); loadUsers(); });
     mk('気分リセット', '', async () => { await jsend('POST', `/api/admin/users/${u.id}/mood-reset`); loadUsers(); });
     mk('記憶を消す', '', async () => {
       if (!confirm(`${u.username} の会話履歴と記憶(${u.turns}件)を消しますか?`)) return;
@@ -1553,7 +1586,7 @@ async function loadUsers() {
       if (!rr.ok) { $('adMsg').className = 'err'; $('adMsg').textContent = jj.error; } else loadUsers();
     });
     const sub = document.createElement('div'); sub.className = 'sub';
-    sub.textContent = `最終ログイン ${fmtDate(u.last_login)}  ／  気分 😊${u.mood.joy} 😠${u.mood.anger} 😢${u.mood.sadness} 💗${u.mood.affinity}  ／  記憶 ${u.turns}件`;
+    sub.textContent = `最終ログイン ${fmtDate(u.last_login)}  ／  気分 😊${u.mood.joy} 😠${u.mood.anger} 😢${u.mood.sadness} 💗${u.mood.affinity}  ／  記憶 ${u.turns}件  ／  ${u.growth.icon} ${u.growth.name} ${u.growth.xp}XP`;
     row.append(nm, acts, sub); box.appendChild(row);
   }
 }

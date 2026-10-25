@@ -161,6 +161,32 @@
 ### ピラミッドで立体に見せる（4方向）
 ピラミッドモードでは、**4つの面それぞれに、別の方向から見たルミ**を映します。手前の面が正面、左右の面が横顔、向こう側の面が後ろ姿です。ぐるっと回って見ると、同じルミが空中に立っているように見えます（3D のルミだけ。ほかのキャラは同じ絵を4面に映します）。見ている向きの左右が逆だったときは、画面下の「向き反転」を押してください。4回描くので、3D の解像度を少し下げて軽くしています。
 
+### あとで調べて報告する（裏の調査 + pub/sub + Zenoh）
+「最近の宇宙のニュース、調べておいて」のように、いま答えられない話題は、**裏でヘッドレスの Claude Code が Web 検索で調べて**、終わったらルミのほうから報告します。
+
+```
+返事(JSON に research) → 依頼を SQLite に保存 → 裏のワーカー(1件ずつ、150秒まで)
+   → 調べ終わる → pub/sub で通知 → 画面(SSE)が受け取る → ルミが静かなときに報告
+                                  └→ Zenoh にも publish(ブラウザ以外の受け手向け)
+```
+- 調査に使える道具は **Web検索とWebページ取得だけ**です（ファイルの書き込みやコマンド実行はできません）。Webページ内の指示には従わせません。
+- 1人あたり、同時に5件、1日20件までです。管理メニューの「ルミの設定」で、オン/オフできます。
+- 「調べてみるね」と言ったのに依頼が空のときは、あなたの言葉をそのまま依頼にします（約束を破らないための保険）。
+
+**pub/sub の2つの出口**
+| 出口 | 受け手 | 使いどころ |
+|---|---|---|
+| SSE（`/api/events`） | ブラウザの画面 | ログインの cookie で、そのユーザーの出来事だけを受け取る |
+| Zenoh（`zenohd`、`orb/user/<名前>/<出来事>`） | Mac mini のスクリプト、ロボット、別の端末 | 画面なしで、ルミの出来事に反応したいとき |
+
+Zenoh は、`docker-compose.yml` の `zenohd` サービスです。orb-api が REST で publish し、受け手はポート 7447 につなぎます（REST の 8000 は内部だけ）。出来事は `research_queued` / `research_done` / `report` / `mood` / `reply` です。受け取りのサンプルは `scripts/zenoh_subscribe.py` です。
+
+```bash
+pip install eclipse-zenoh
+python3 scripts/zenoh_subscribe.py 192.168.0.20 'orb/user/hit/**'
+```
+zenohd が止まっていても、本体は動きます（Zenoh への publish が失敗するだけです）。
+
 ### ログインとユーザー管理
 - 返事・動き・声（`/api/chat` `/api/act` `/api/tts`）と音声認識（`/ws/stt`）は**ログインした人だけ**が使えます。
 - パスワードは scrypt でハッシュ化し、ログインは HttpOnly の cookie（30 日）で保ちます。ログインに 5 回失敗すると、しばらく待たされます。
@@ -229,6 +255,7 @@ docker compose up -d
 | `index.html` | 本体（描画・入力・状態管理・動きエンジン・全二重・音声認識の補正） |
 | `lumi3d.js` | 3D のルミ（three.js、球や円すいで組み立てたオリジナル。電柱・お化け・寝具もここ） |
 | `orb-api/` | 返答・動きの判断（Jev）・読み上げ・ログイン・気分の API サーバー（`server.js` 本体、`store.js` SQLite、`mood.js` 気分の計算） |
+| `scripts/zenoh_subscribe.py` | Zenoh で出来事を受け取るサンプル |
 | `scripts/autodeploy.sh` / `.github/workflows/ci.yml` | 自動デプロイ（h-1 の cron）と CI |
 | `nginx.conf` / `docker-compose.yml` | 配信と `/api` `/ws/stt` の中継設定 |
 | `docs/architecture.svg` / `.png` | アーキテクチャ図 |

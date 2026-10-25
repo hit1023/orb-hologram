@@ -25,9 +25,20 @@ services:
     environment:
       TTS_ROUTER_URL: http://192.168.0.21:8000
       TTS_FALLBACK_URL: http://192.168.0.20:8000
+      ZENOH_REST_URL: http://zenohd:8000     # 出来事を Zenoh にも publish する(zenohd がなくても本体は動く)
     volumes:
       - claude-config:/data/claude-config
       - orb-data:/data/db      # ユーザー・ログイン・ルミの気分(SQLite)
+
+  # Zenoh(pub/sub のルーター)。orb-api が出来事を publish し、ブラウザ以外(Mac miniのスクリプト・ロボット等)が subscribe する
+  #   REST(8000)は内部だけ。Zenoh本体(7447)だけをLANに出す
+  zenohd:
+    image: eclipse/zenoh:latest
+    container_name: orb-zenohd
+    restart: unless-stopped
+    command: ["--rest-http-port", "8000"]
+    ports:
+      - "7447:7447"
 
 volumes:
   claude-config:

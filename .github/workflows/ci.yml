@@ -25,6 +25,8 @@ jobs:
           node --check orb-api/memory.js
           node --check orb-api/news.js
           node --check orb-api/weather.js
+          node --check orb-api/bus.js
+          node --check orb-api/research.js
           cp lumi3d.js /tmp/lumi3d.mjs && node --check /tmp/lumi3d.mjs
       - name: Validate compose
         run: |

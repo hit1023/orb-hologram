@@ -12,6 +12,8 @@ const moodLib = require('./mood');
 const memory = require('./memory');
 const news = require('./news');
 const weather = require('./weather');
+const bus = require('./bus');
+const { runResearch } = require('./research');
 
 const PORT = +process.env.PORT || 3000;
 const MODEL = process.env.CLAUDE_MODEL || 'haiku';
@@ -42,7 +44,7 @@ const SYSTEM = `あなたは「ルミ」。スマホとホログラムの板の�
 - 例: 「こんにちは」→「わぁ、こんにちは！今夜はお星さまがきれいに光ってるから、会えてうれしいな。今日はどんな一日だった？」
 - 知らないことは知らないと素直に言う。難しい話は短く言い換える。
 - 出力は次のJSONだけ。説明やコードブロックは付けない。
-{"reply":"返答の文章","emotion":"neutral|happy|sad|surprised|angry|shy のどれか1つ","actions":["動き",...]}
+{"reply":"返答の文章","emotion":"neutral|happy|sad|surprised|angry|shy のどれか1つ","actions":["動き",...],"research":"あとで調べたい内容(なければ空文字)"}
 emotionは返答の気持ちに合わせて選ぶ(うれしい=happy、残念=sad、驚き=surprised、むっとした=angry、照れ=shy、それ以外=neutral)。
 体を動かす依頼(「手をあげて」「くるくる回って」「泣いて」など)があったら、actionsに入れる。使える動き:
 raise_right(右手をあげる。ルミ自身の右手) raise_left(左手をあげる。ルミ自身の左手) raise_both(両手をあげる) wave(手をふる) clap(拍手) spin(くるくる回る) jump(ジャンプ) close_eyes(目を閉じる) open_eyes(目を開ける) cry(泣く) laugh(笑う) angry(怒る) shy(照れる) bow(おじぎ) nod(うなずく) shake_head(首をふる) dance(おどる) sleep(横になって寝る)
@@ -50,6 +52,7 @@ wink_left(左目でウインク。ルミ自身の左目) wink_right(右目でウ
 複数の依頼は言われた順に並べる(最大4つ)。この一覧にない動きは、いちばん近いものを選ぶ。
 依頼がなくても、相手の言葉に自然に反応して、動きを1つだけ付けてよい。例: ありがとう→bow、かわいい・すてき→shy、すごい・やったね→banzai、おやすみ→sleep、ねむい→yawn、寒い→shiver、わからない→shrug、びっくりする話→surprise、疲れた→sit、ほめられた→sparkle。
 ただし毎回は付けず、自然なときだけ(目安は3回に1回くらい)。普通の会話ではactionsは[]。
+いま答えられない質問(最新のニュース・知らない固有名詞・調べ物が必要なこと)で、急ぎでないときだけ、researchに調べたい内容を短い日本語で書き、replyは「調べておくね。わかったらあとで教えるよ」のように伝える。それ以外のresearchは空文字。「調べてみるね」「あとで教えるね」と言うときは、必ずresearchを書く。
 動きの依頼のときのreplyは、動きに合う短い一言にする(例:「はーい！」「こうかな？」「えへへ」)。`;
 
 function buildPrompt(text, history) {
@@ -181,6 +184,7 @@ function parseReply(raw) {
         return {
           reply: j.reply.trim(), emotion: EMOTIONS.includes(j.emotion) ? j.emotion : 'neutral',
           actions: (Array.isArray(j.actions) ? j.actions : []).filter(a => ACTIONS.includes(a)).slice(0, 4),
+          research: typeof j.research === 'string' ? j.research.trim().slice(0, 80) : '',
         };
     } catch (_) { /* fall through */ }
   }
@@ -267,6 +271,7 @@ function userTurn(user, text) {
     const before = moodLib.decayed(store.loadMoodRow(user.id));
     const after = moodLib.apply(before, an);
     store.saveMoodRow(user.id, after);
+    bus.publish(user.id, user.username, 'mood', { mood: moodLib.round(after), stance: moodLib.stance(after), manner: an.manner });
     const attacked = store.getSettings().guard_enabled === 1 && ['rude', 'intimidating'].includes(an.manner);   // 言葉で攻撃された(威圧・暴言)と感じた → 鎧でガード
     const refused = !an.spontaneous && an.actions.some(a => !ALWAYS_OK.includes(a)) && moodLib.shouldRefuse(after);
     return { ...an, source, refused, attacked, actions: refused ? ['sulk'] : an.actions, mood: { ...moodLib.round(after), stance: moodLib.stance(after) }, moodLabel: moodLib.label(after), stance: moodLib.stance(after), raw: after };
@@ -337,13 +342,33 @@ function seedAdmin() {
   try { store.createUser(u, p, 'admin'); console.log(`[auth] 管理者 ${u} を作りました`); } catch (e) { console.log(`[auth] 管理者を作れませんでした: ${e.message}`); }
 }
 seedAdmin();
+
+// ---- あとで調べて報告する: 裏のワーカー(1件ずつ。ヘッドレスClaudeがWeb検索) ----
+let researchBusy = false;
+async function researchTick() {
+  if (researchBusy) return;
+  store.failStaleJobs();
+  const job = store.nextPendingJob(); if (!job || !store.getSettings().research_enabled) return;
+  researchBusy = true; store.setJobRunning(job.id);
+  const t0 = Date.now();
+  try {
+    const r = await runResearch(job.query);
+    store.finishJob(job.id, 'done', r.text, r.sources);
+    console.log(`[research] done #${job.id} ${job.username} ${Date.now() - t0}ms "${job.query.slice(0, 30)}"`);
+    bus.publish(job.user_id, job.username, 'research_done', { id: job.id, query: job.query });
+  } catch (e) {
+    store.finishJob(job.id, 'failed', null, null);
+    console.log(`[research] failed #${job.id}: ${e.message.slice(0, 120)}`);
+  } finally { researchBusy = false; }
+}
+setInterval(() => researchTick().catch(() => {}), 5000).unref();
 const userView = (u) => ({ id: u.id, username: u.username, role: u.role });
 const moodView = (id) => { const m = moodLib.decayed(store.loadMoodRow(id)); return { ...moodLib.round(m), label: moodLib.label(m), stance: moodLib.stance(m) }; };
 
 http.createServer(async (req, res) => {
   try {
     const url = (req.url || '').split('?')[0];
-    if (req.method === 'GET' && (url === '/health' || url === '/api/health')) return send(res, 200, { ok: true });
+    if (req.method === 'GET' && (url === '/health' || url === '/api/health')) return send(res, 200, { ok: true, zenoh: bus.zenohEnabled() ? { published: bus.stats.published, failed: bus.stats.failed } : false });
 
     // ---- 認証 ----
     if (req.method === 'POST' && url === '/api/auth/login') {
@@ -428,11 +453,33 @@ http.createServer(async (req, res) => {
 
     // ここから先(返事・動き・声)は、ログインした人だけ
     let user = null;
-    if (url === '/api/chat' || url === '/api/act' || url === '/api/tts' || url === '/api/topic') {
+    if (url === '/api/chat' || url === '/api/act' || url === '/api/tts' || url === '/api/topic' || url === '/api/report') {
       user = currentUser(req);
       if (!user) return send(res, 401, { error: 'login required' });
     }
 
+    if (req.method === 'GET' && url === '/api/events') {                    // pub/sub の受け口(SSE): 調査が終わった・気分が変わった、などを画面へ
+      const u = currentUser(req); if (!u) return send(res, 401, { error: 'login required' });
+      res.writeHead(200, { 'content-type': 'text/event-stream; charset=utf-8', 'cache-control': 'no-cache, no-transform', connection: 'keep-alive', 'x-accel-buffering': 'no' });
+      res.write('retry: 5000\n\n: connected\n\n'); bus.subscribe(u.id, res); return;
+    }
+    if (req.method === 'POST' && url === '/api/report') {                   // 調べ終わったことを、ルミの口調で報告する
+      const st = store.getSettings(); if (!st.research_enabled) return send(res, 200, { none: true });
+      const job = store.takeDoneJob(user.id); if (!job) return send(res, 200, { none: true, pending: store.countJobs(user.id) });
+      const m = moodLib.decayed(store.loadMoodRow(user.id));
+      const system = SYSTEM + `\n\n話し相手のユーザー名は「${user.username}」。` + moodLib.guide(m, false, (store.loadMoodRow(user.id) || {}).impression);
+      const prompt = `(相手はいま話しかけていない。さっき「調べておくね」と約束したことを、調べ終わったので、ルミのほうから報告する。)\n調べたこと: ${job.query}\n調査結果:\n${job.result}\n` +
+        'この調査結果だけを根拠に、ルミの口調で2〜4文で報告する。結果にないことは言わない。確認できなかった点は正直に言う。断定しすぎず、出典の媒体名を一言入れる。URLは声に出さない。最後に感想や質問を軽く添える。actionsは[]。';
+      let out; try { out = parseReply(await runCloudflare(prompt, [], system)); } catch (_) { out = { reply: `さっきの調べ物、わかったよ。${job.result.replace(/\s+/g, ' ').slice(0, 90)}`, emotion: 'happy' }; }
+      out.actions = []; delete out.research;
+      store.markJobDelivered(job.id);
+      store.addTurn(user.id, `（ルミから報告）${job.query}`.slice(0, 200), out.reply, out.emotion);
+      let sources = []; try { sources = JSON.parse(job.sources || '[]'); } catch (_) {}
+      out.report = true; out.news = { title: job.query, source: '調べた結果', url: sources[0] || '' }; out.mood = { ...moodLib.round(m), stance: moodLib.stance(m) };
+      console.log(`[report] ${user.username} #${job.id} -> ${out.reply.slice(0, 60)}`);
+      bus.publish(user.id, user.username, 'report', { text: out.reply, query: job.query, sources });
+      return send(res, 200, out);
+    }
     if (req.method === 'POST' && url === '/api/topic') {                  // ルミから話題を出す: その人の興味に合うニュースを1つ選んで、自分から話しかける
       const st = store.getSettings(); if (!st.topic_enabled) return send(res, 200, { none: true, disabled: true });
       const t0 = Date.now(), env = st.weather_enabled ? store.getEnv(user.id) : null;
@@ -476,10 +523,19 @@ http.createServer(async (req, res) => {
       }
       const out = parseReply(raw);
       if (turn.refused) out.actions = ['sulk'];
+      let rq = out.research || '';                                                  // あとで調べて報告する(「調べてみるね」と言ったのに依頼が空なら、あなたの言葉を依頼にする)
+      if (!rq && /(調べて(み|お)る|調べておく|あとで教え|後で教え)/.test(out.reply)) rq = text.slice(0, 80);
+      out.researching = false;
+      if (rq && store.getSettings().research_enabled) {
+        const id = store.addJob(user.id, rq, text.slice(0, 200));
+        if (id) { out.researching = true; bus.publish(user.id, user.username, 'research_queued', { id, query: rq }); setTimeout(() => researchTick().catch(() => {}), 200); }
+      }
+      delete out.research;
       if (turn.raw.anger >= 60 && ['neutral', 'happy'].includes(out.emotion)) out.emotion = 'angry';
       else if (turn.raw.sadness >= 60 && ['neutral', 'happy'].includes(out.emotion)) out.emotion = 'sad';
       out.mood = turn.mood; out.moodLabel = turn.moodLabel; out.stance = turn.stance; out.attacked = !!turn.attacked;
       out.memories = mems.map(m => m.user_text.replace(/\s+/g, ' ').slice(0, 16));   // 思い出した言葉(画面で泡にする)
+      bus.publish(user.id, user.username, 'reply', { text: out.reply, emotion: out.emotion, stance: out.stance });
       memory.remember(user.id, text.slice(0, 300), out.reply, out.emotion);   // 履歴に保存して、あとから思い出せるようにする
       analyzeFeelings(user, turn.raw).catch(() => {});
       extractInterests(user).catch(() => {});                                  // 興味のあるキーワードも、ときどき更新                         // 履歴×気分から、この人への本音を分析(裏で)

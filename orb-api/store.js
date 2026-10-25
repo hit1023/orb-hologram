@@ -39,6 +39,16 @@ db.exec(`
   );
   CREATE INDEX IF NOT EXISTS turns_user ON turns (user_id, id);
   CREATE TABLE IF NOT EXISTS settings (key TEXT PRIMARY KEY, value TEXT NOT NULL);
+  CREATE TABLE IF NOT EXISTS jobs (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    query TEXT NOT NULL, ask TEXT,
+    status TEXT NOT NULL DEFAULT 'pending',   -- pending / running / done / failed
+    result TEXT, sources TEXT,
+    delivered INTEGER NOT NULL DEFAULT 0,
+    created_at INTEGER NOT NULL, done_at INTEGER
+  );
+  CREATE INDEX IF NOT EXISTS jobs_user ON jobs (user_id, status);
   CREATE TABLE IF NOT EXISTS user_env (
     user_id INTEGER PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
     lat REAL, lng REAL, weather TEXT, updated_at INTEGER NOT NULL
@@ -151,14 +161,14 @@ function saveMoodRow(userId, m) {
 const saveImpression = (userId, text, turns, stance) =>
   db.prepare('UPDATE moods SET impression = ?, impr_turns = ?, impr_stance = ?, impr_at = ? WHERE user_id = ?').run(text, turns, stance, now(), userId);
 // ---- 管理者が決める設定(ルミの動かし方) ----
-const SETTING_DEFAULTS = { topic_enabled: 1, topic_first_sec: 75, topic_interval_sec: 240, weather_enabled: 1, guard_enabled: 1, particle_level: 2 };
+const SETTING_DEFAULTS = { research_enabled: 1, topic_enabled: 1, topic_first_sec: 75, topic_interval_sec: 240, weather_enabled: 1, guard_enabled: 1, particle_level: 2 };
 function getSettings() {
   const out = { ...SETTING_DEFAULTS };
   for (const r of db.prepare('SELECT key, value FROM settings').all()) if (r.key in out) out[r.key] = Number(r.value);
   return out;
 }
 function setSettings(patch) {
-  const lim = { topic_enabled: [0, 1], topic_first_sec: [10, 3600], topic_interval_sec: [30, 86400], weather_enabled: [0, 1], guard_enabled: [0, 1], particle_level: [1, 3] };
+  const lim = { research_enabled: [0, 1], topic_enabled: [0, 1], topic_first_sec: [10, 3600], topic_interval_sec: [30, 86400], weather_enabled: [0, 1], guard_enabled: [0, 1], particle_level: [1, 3] };
   for (const [k, v] of Object.entries(patch || {})) {
     if (!(k in lim)) continue; const n = Math.round(Number(v)); if (!Number.isFinite(n)) continue;
     db.prepare('INSERT INTO settings (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value').run(k, String(Math.max(lim[k][0], Math.min(lim[k][1], n))));
@@ -174,6 +184,23 @@ function getEnv(userId) {
   return w ? { lat: r.lat, lng: r.lng, weather: w, updated_at: r.updated_at } : null;
 }
 const clearEnv = (userId) => db.prepare('DELETE FROM user_env WHERE user_id = ?').run(userId);
+
+// ---- 調査の依頼(あとで調べて報告する) ----
+const MAX_PENDING_PER_USER = 5, MAX_PER_DAY = 20;
+function addJob(userId, query, ask) {
+  const dup = db.prepare('SELECT id FROM jobs WHERE user_id = ? AND query = ? AND created_at > ?').get(userId, query, now() - 3600000);
+  if (dup) return Number(dup.id);
+  if (db.prepare("SELECT COUNT(*) AS n FROM jobs WHERE user_id = ? AND status IN ('pending','running')").get(userId).n >= MAX_PENDING_PER_USER) return null;
+  if (db.prepare('SELECT COUNT(*) AS n FROM jobs WHERE user_id = ? AND created_at > ?').get(userId, now() - 86400000).n >= MAX_PER_DAY) return null;
+  return Number(db.prepare('INSERT INTO jobs (user_id, query, ask, created_at) VALUES (?, ?, ?, ?)').run(userId, query, ask || null, now()).lastInsertRowid);
+}
+const nextPendingJob = () => db.prepare("SELECT j.*, u.username FROM jobs j JOIN users u ON u.id = j.user_id WHERE j.status = 'pending' ORDER BY j.id LIMIT 1").get() || null;
+const setJobRunning = (id) => db.prepare("UPDATE jobs SET status = 'running' WHERE id = ?").run(id);
+const finishJob = (id, status, result, sources) => db.prepare('UPDATE jobs SET status = ?, result = ?, sources = ?, done_at = ? WHERE id = ?').run(status, result || null, sources ? JSON.stringify(sources) : null, now(), id);
+const takeDoneJob = (userId) => db.prepare("SELECT * FROM jobs WHERE user_id = ? AND status = 'done' AND delivered = 0 ORDER BY id LIMIT 1").get(userId) || null;
+const markJobDelivered = (id) => db.prepare('UPDATE jobs SET delivered = 1 WHERE id = ?').run(id);
+const failStaleJobs = () => db.prepare("UPDATE jobs SET status = 'failed', done_at = ? WHERE status IN ('pending','running') AND created_at < ?").run(now(), now() - 20 * 60000).changes;
+const countJobs = (userId) => db.prepare("SELECT COUNT(*) AS n FROM jobs WHERE user_id = ? AND status IN ('pending','running')").get(userId).n;
 
 // 興味のあるキーワード(会話の履歴からLLMが拾う)と、もう話したニュース
 const saveInterests = (userId, list, turns) => db.prepare('UPDATE moods SET interests = ?, int_turns = ? WHERE user_id = ?').run(JSON.stringify(list), turns, userId);
@@ -204,5 +231,5 @@ const turnStats = (userId) => db.prepare('SELECT COUNT(*) AS n, MIN(created_at) 
 const countTurns = (userId) => db.prepare('SELECT COUNT(*) AS n FROM turns WHERE user_id = ?').get(userId).n;
 const clearTurns = (userId) => db.prepare('DELETE FROM turns WHERE user_id = ?').run(userId).changes;
 
-module.exports = { getSettings, setSettings, saveEnv, getEnv, clearEnv, saveInterests, getInterests, toldNews, markNewsTold, turnStats, addTurn, setTurnVec, recentTurns, turnsWithVec, countTurns, clearTurns, createUser, countUsers, countAdmins, listUsers, getUser, deleteUser, setPassword, checkLogin, verifyUserPassword,
+module.exports = { addJob, nextPendingJob, setJobRunning, finishJob, takeDoneJob, markJobDelivered, failStaleJobs, countJobs, getSettings, setSettings, saveEnv, getEnv, clearEnv, saveInterests, getInterests, toldNews, markNewsTold, turnStats, addTurn, setTurnVec, recentTurns, turnsWithVec, countTurns, clearTurns, createUser, countUsers, countAdmins, listUsers, getUser, deleteUser, setPassword, checkLogin, verifyUserPassword,
   createSession, sessionUser, deleteSession, loadMoodRow, saveMoodRow, saveImpression, resetMood, validateNewUser };

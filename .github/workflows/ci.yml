@@ -20,10 +20,12 @@ jobs:
           PY
           node --check /tmp/page.js
           node --check orb-api/server.js
+          node --check orb-api/store.js
+          node --check orb-api/mood.js
           cp lumi3d.js /tmp/lumi3d.mjs && node --check /tmp/lumi3d.mjs
       - name: Validate compose
         run: |
-          touch .env   # 実際の .env(トークン)は git 管理外。CI ではダミーで検証する
+          printf 'ADMIN_USER=admin\nADMIN_PASSWORD=ci-test-password\n' > .env   # 実際の .env(トークン)は git 管理外。CI ではダミーで検証する
           docker compose config -q
       - name: Build images
         run: docker compose build
@@ -32,7 +34,17 @@ jobs:
           docker compose up -d
           for i in $(seq 1 30); do curl -fsS http://127.0.0.1:8897/api/health && break; sleep 2; done
           curl -fsS http://127.0.0.1:8897/ | grep -q "ORB Hologram"
-          curl -fsS -o /dev/null -w "chat(no text) -> %{http_code}\n" -X POST http://127.0.0.1:8897/api/chat -H 'content-type: application/json' -d '{}' | grep -q 400
+          B=http://127.0.0.1:8897
+          # ログインしていなければ、返事・声・音声認識は 401
+          curl -s -o /dev/null -w "chat(no login) -> %{http_code}\n" -X POST $B/api/chat -H 'content-type: application/json' -d '{}' | grep -q 401
+          curl -s -o /dev/null -w "stt(no login) -> %{http_code}\n" $B/ws/stt | grep -q 401
+          curl -s -o /dev/null -w "bad login -> %{http_code}\n" -X POST $B/api/auth/login -H 'content-type: application/json' -d '{"username":"admin","password":"wrong"}' | grep -q 401
+          # ログインしたら使える(テキストなしは 400)。管理者はユーザーを作れて、一般ユーザーは管理APIを使えない
+          curl -fsS -c /tmp/cj -X POST $B/api/auth/login -H 'content-type: application/json' -d '{"username":"admin","password":"ci-test-password"}' >/dev/null
+          curl -s -b /tmp/cj -o /dev/null -w "chat(no text) -> %{http_code}\n" -X POST $B/api/chat -H 'content-type: application/json' -d '{}' | grep -q 400
+          curl -fsS -b /tmp/cj -X POST $B/api/admin/users -H 'content-type: application/json' -d '{"username":"ci-user","password":"ci-user-password"}' >/dev/null
+          curl -fsS -c /tmp/cj2 -X POST $B/api/auth/login -H 'content-type: application/json' -d '{"username":"ci-user","password":"ci-user-password"}' >/dev/null
+          curl -s -b /tmp/cj2 -o /dev/null -w "admin api as user -> %{http_code}\n" $B/api/admin/users | grep -q 403
       - name: Logs on failure
         if: failure()
         run: docker compose logs

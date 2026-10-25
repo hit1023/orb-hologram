@@ -27,6 +27,8 @@ services:
       TTS_FALLBACK_URL: http://192.168.0.20:8000
     volumes:
       - claude-config:/data/claude-config
+      - orb-data:/data/db      # ユーザー・ログイン・ルミの気分(SQLite)
 
 volumes:
   claude-config:
+  orb-data:

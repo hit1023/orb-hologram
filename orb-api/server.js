@@ -2,9 +2,13 @@
 // orb-api: ホログラムキャラ用の小さな中継サーバー。
 //   POST /api/chat  {text, history}  -> {reply, emotion}   (Claude Code CLI を headless で呼ぶ)
 //   POST /api/tts   {text, emotion}  -> audio/mpeg         (既存の Aivis ルーターへ中継)
+//   POST /api/act   {text}           -> {actions, mood...}          (Jev で動きと話しかけ方を判断)
+//   /api/auth/*  ログイン  /api/admin/*  ユーザー管理(管理者のみ)
 //   GET  /health
 const http = require('http');
 const { spawn } = require('child_process');
+const store = require('./store');
+const moodLib = require('./mood');
 
 const PORT = +process.env.PORT || 3000;
 const MODEL = process.env.CLAUDE_MODEL || 'haiku';
@@ -51,10 +55,10 @@ function buildPrompt(text, history) {
   return `${lines.length ? 'これまでの会話:\n' + lines.join('\n') + '\n\n' : ''}あなたの話し相手: ${text}\n\nルミの返答(JSONのみ):`;
 }
 
-function runClaude(prompt) {
+function runClaude(prompt, system = SYSTEM) {
   return new Promise((resolve, reject) => {
     const args = ['-p', prompt, '--model', MODEL, '--output-format', 'text',
-      '--system-prompt', SYSTEM, '--tools', '', '--no-session-persistence'];
+      '--system-prompt', system, '--tools', '', '--no-session-persistence'];
     const child = spawn('claude', args, { cwd: '/tmp', env: process.env, stdio: ['ignore', 'pipe', 'pipe'] });
     let out = '', err = '';
     const timer = setTimeout(() => { child.kill('SIGKILL'); reject(new Error('claude timeout')); }, 45000);
@@ -68,8 +72,8 @@ function runClaude(prompt) {
   });
 }
 
-async function runCloudflare(text, history) {
-  const msgs = [{ role: 'system', content: SYSTEM }];
+async function runCloudflare(text, history, system = SYSTEM) {
+  const msgs = [{ role: 'system', content: system }];
   for (const h of (Array.isArray(history) ? history : []).slice(-8))
     msgs.push({ role: h.role === 'user' ? 'user' : 'assistant', content: String(h.text || '').slice(0, 300) });
   msgs.push({ role: 'user', content: text });
@@ -127,6 +131,12 @@ function jevQuestions() {
     q['act' + (i + 1)] = { type: 'choice', instructions: `ユーザーは、かわいいキャラクターに体の動きを頼んでいるか。頼まれた動きのうち、言われた順で${i + 1}番目のものはどれか`, criteria: crit };
   });
   q.react = { type: 'choice', instructions: 'ユーザーの言葉に、かわいいキャラクターが頼まれなくても自然にとる反応はどれか。ふつうの会話ならnone', criteria: { none: '特別な反応はいらない、ふつうの会話', ...REACT_DESC } };
+  q.manner = { type: 'choice', instructions: 'ユーザーの話しかけ方は、キャラクターに対してどんな態度か', criteria: {
+    neutral: 'ふつうの会話・質問・あいさつ', kind: '丁寧でやさしい・お願いする・気づかう・やわらかい言い方',
+    thanks: '感謝している・ほめている・好意を伝えている', commanding: 'ぶっきらぼうな命令・指示。お願いや敬語がない(例:手をあげて、回れ、答えろ)',
+    rude: '暴言・侮辱・悪口・きつい言い方で攻撃している' } };
+  q.topic = { type: 'choice', instructions: 'ユーザーは、どんな出来事を話しているか', criteria: {
+    none: '特に出来事の話ではない', happy: 'うれしい・楽しい出来事を話している', sad: '悲しい・つらい・落ち込んだ出来事を話している' } };
   return q;
 }
 let lastSpont = 0;
@@ -150,7 +160,33 @@ async function jevAct(text) {
     const r = pick('react', 0.6);
     if (r && ACTIONS.includes(r.c) && Date.now() - lastSpont > 15000 && (r.p >= 0.85 || Math.random() < 0.6)) { acts.push(r.c); spontaneous = true; lastSpont = Date.now(); }
   }
-  return { actions: acts, spontaneous };
+  const mp = pick('manner', 0.5), tp = pick('topic', 0.5);
+  const manner = mp && (mp.c !== 'rude' || mp.p >= 0.6) ? mp.c : 'neutral';
+  return { actions: acts, spontaneous, manner, topic: tp ? tp.c : 'none' };
+}
+
+// ---- 1回の発話の分析(動き・話しかけ方)と、気分の更新。/api/act と /api/chat が同じ結果を共有する ----
+const turnCache = new Map();
+const ALWAYS_OK = ['lower', 'open_eyes'];      // いかりが大きくても、やってくれる動き
+function userTurn(user, text) {
+  const key = `${user.id}|${text}`, hit = turnCache.get(key);
+  if (hit && Date.now() - hit.at < 20000) return hit.promise;
+  const promise = (async () => {
+    let an = null, source = 'none';
+    if (JEV_KEY) {
+      try { an = await Promise.race([jevAct(text), new Promise((_, rej) => setTimeout(() => rej(new Error('jev slow')), 1800))]); source = 'jev'; }
+      catch (e) { console.log(`[act] failed: ${e.message}`); }
+    }
+    if (!an) an = { actions: [], spontaneous: false, ...moodLib.heuristic(text) };
+    const before = moodLib.decayed(store.loadMoodRow(user.id));
+    const after = moodLib.apply(before, an);
+    store.saveMoodRow(user.id, after);
+    const refused = !an.spontaneous && an.actions.some(a => !ALWAYS_OK.includes(a)) && after.anger >= moodLib.REFUSE_ANGER;
+    return { ...an, source, refused, actions: refused ? ['sulk'] : an.actions, mood: moodLib.round(after), moodLabel: moodLib.label(after), raw: after };
+  })();
+  turnCache.set(key, { at: Date.now(), promise });
+  if (turnCache.size > 200) for (const [k, v] of turnCache) if (Date.now() - v.at > 20000) turnCache.delete(k);
+  return promise;
 }
 
 const VOICE = {   // 感情ごとの声の調子(Aivisルーターの speed / intonation)
@@ -159,7 +195,33 @@ const VOICE = {   // 感情ごとの声の調子(Aivisルーターの speed / in
   shy: { speed: 0.95, intonation: 1.0 }, neutral: {},
 };
 
+// 声をつくる(Aivis)。短い定型の一言は覚えておく
+async function ttsBuffer(text, emotion) {
+  const t0 = Date.now();
+  const ckey = `${emotion || ''}|${text}`;
+  if (ttsCache.has(ckey)) return ttsCache.get(ckey);
+  const synth = (base, id, ms) => fetch(`${base}/speak`, {
+    method: 'POST', headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ text: text.slice(0, 300), speaker_id: id, ...(VOICE[emotion] || {}) }),
+    signal: AbortSignal.timeout(ms),
+  });
+  const cpu = [ROUTER, SPEAKER_ID, 'cpu'], cloud = [FALLBACK_ROUTER, FALLBACK_SPEAKER_ID, 'cloud'];
+  const [first, second] = TTS_PRIMARY === 'cloud' ? [cloud, cpu] : [cpu, cloud];
+  let r, via = first[2];
+  try { r = await synth(first[0], first[1], TTS_TIMEOUT_MS); if (!r.ok) throw new Error(`status ${r.status}`); }
+  catch (e) {   // 主が遅い/落ちているときは予備へ
+    console.log(`[tts] ${first[2]} failed (${e.message}) -> ${second[2]}`);
+    via = second[2]; r = await synth(second[0], second[1], 30000);
+  }
+  if (!r.ok) throw Object.assign(new Error(`tts ${r.status}`), { status: 502 });
+  const buf = Buffer.from(await r.arrayBuffer());
+  console.log(`[tts] ${via} ${Date.now() - t0}ms ${buf.length}B`);
+  if (text.length <= 16) { ttsCache.set(ckey, buf); if (ttsCache.size > 80) ttsCache.delete(ttsCache.keys().next().value); }
+  return buf;
+}
+
 function readJson(req) {
+  if (!/json/i.test(String(req.headers['content-type'] || ''))) return Promise.reject(Object.assign(new Error('content-type must be application/json'), { status: 415 }));
   return new Promise((resolve, reject) => {
     let b = '';
     req.on('data', d => { b += d; if (b.length > 100000) { reject(new Error('too large')); req.destroy(); } });
@@ -171,69 +233,145 @@ function send(res, code, obj) {
   res.end(JSON.stringify(obj));
 }
 
+// ---- ログイン(セッションcookie) ----
+const COOKIE = 'orb_sid';
+const cookieOf = (req) => { const m = String(req.headers.cookie || '').match(new RegExp(`(?:^|;\\s*)${COOKIE}=([^;]+)`)); return m ? m[1] : ''; };
+const currentUser = (req) => store.sessionUser(cookieOf(req));
+const isHttps = (req) => String(req.headers['x-forwarded-proto'] || '').split(',')[0].trim() === 'https';
+const setCookie = (res, req, value, maxAge) => res.setHeader('set-cookie', `${COOKIE}=${value}; Path=/; HttpOnly; SameSite=Lax; Max-Age=${maxAge}${isHttps(req) ? '; Secure' : ''}`);
+const clientIp = (req) => String(req.headers['x-forwarded-for'] || req.headers['x-real-ip'] || req.socket.remoteAddress || '').split(',')[0].trim();
+const fails = new Map();    // ログイン失敗の回数(ブルートフォース対策)
+function lockedFor(key) { const f = fails.get(key); return f && f.until > Date.now() ? Math.ceil((f.until - Date.now()) / 1000) : 0; }
+function noteFail(key) { const f = fails.get(key) || { n: 0, until: 0 }; f.n++; if (f.n >= 5) { f.until = Date.now() + Math.min(900, 30 * 2 ** (f.n - 5)) * 1000; } fails.set(key, f); }
+function seedAdmin() {
+  if (store.countUsers() > 0) return;
+  const u = process.env.ADMIN_USER || 'admin', p = process.env.ADMIN_PASSWORD;
+  if (!p) return console.log('[auth] ユーザーがいません。.env に ADMIN_PASSWORD(8文字以上)を入れて再起動すると、管理者 ' + u + ' を作ります');
+  try { store.createUser(u, p, 'admin'); console.log(`[auth] 管理者 ${u} を作りました`); } catch (e) { console.log(`[auth] 管理者を作れませんでした: ${e.message}`); }
+}
+seedAdmin();
+const userView = (u) => ({ id: u.id, username: u.username, role: u.role });
+const moodView = (id) => { const m = moodLib.decayed(store.loadMoodRow(id)); return { ...moodLib.round(m), label: moodLib.label(m) }; };
+
 http.createServer(async (req, res) => {
   try {
-    if (req.method === 'GET' && (req.url === '/health' || req.url === '/api/health')) return send(res, 200, { ok: true });
-    if (req.method === 'POST' && req.url === '/api/chat') {
+    const url = (req.url || '').split('?')[0];
+    if (req.method === 'GET' && (url === '/health' || url === '/api/health')) return send(res, 200, { ok: true });
+
+    // ---- 認証 ----
+    if (req.method === 'POST' && url === '/api/auth/login') {
+      const { username, password } = await readJson(req);
+      const key = `${clientIp(req)}|${String(username || '').toLowerCase()}`;
+      const wait = lockedFor(key);
+      if (wait) return send(res, 429, { error: `失敗が続いたので、${wait}秒待ってからやり直してください` });
+      const u = store.checkLogin(username, password);
+      if (!u) { noteFail(key); return send(res, 401, { error: 'ユーザー名かパスワードが違います' }); }
+      fails.delete(key);
+      const s = store.createSession(u.id);
+      setCookie(res, req, s.token, s.maxAge);
+      console.log(`[auth] login ${u.username}`);
+      return send(res, 200, { user: userView(u), mood: moodView(u.id) });
+    }
+    if (req.method === 'POST' && url === '/api/auth/logout') {
+      store.deleteSession(cookieOf(req)); setCookie(res, req, '', 0); return send(res, 200, { ok: true });
+    }
+    if (req.method === 'GET' && url === '/api/auth/check') {          // nginx の auth_request 用(WebSocketの入口)
+      return currentUser(req) ? (res.writeHead(204), res.end()) : send(res, 401, { error: 'login required' });
+    }
+    if (req.method === 'GET' && url === '/api/auth/me') {
+      const u = currentUser(req); if (!u) return send(res, 401, { error: 'login required' });
+      return send(res, 200, { user: userView(u), mood: moodView(u.id) });
+    }
+    if (req.method === 'POST' && url === '/api/auth/password') {
+      const u = currentUser(req); if (!u) return send(res, 401, { error: 'login required' });
+      const { current, next } = await readJson(req);
+      if (!store.verifyUserPassword(u.id, current)) return send(res, 403, { error: '今のパスワードが違います' });
+      store.setPassword(u.id, next);
+      const s = store.createSession(u.id); setCookie(res, req, s.token, s.maxAge);   // この端末だけログインを続ける
+      return send(res, 200, { ok: true });
+    }
+
+    // ---- ユーザー管理(管理者のみ) ----
+    if (url.startsWith('/api/admin/')) {
+      const me = currentUser(req);
+      if (!me) return send(res, 401, { error: 'login required' });
+      if (me.role !== 'admin') return send(res, 403, { error: '管理者だけが使えます' });
+      if (req.method === 'GET' && url === '/api/admin/users')
+        return send(res, 200, { users: store.listUsers().map(u => ({ ...u, mood: moodView(u.id) })) });
+      if (req.method === 'POST' && url === '/api/admin/users') {
+        const { username, password, role } = await readJson(req);
+        const u = store.createUser(String(username || '').trim(), password, role === 'admin' ? 'admin' : 'user');
+        console.log(`[admin] ${me.username} がユーザー ${u.username} を作成`);
+        return send(res, 200, { user: u });
+      }
+      const m = url.match(/^\/api\/admin\/users\/(\d+)(?:\/(password|mood-reset))?$/);
+      if (m) {
+        const id = +m[1];
+        if (req.method === 'DELETE' && !m[2]) {
+          if (id === me.id) return send(res, 400, { error: '自分自身は削除できません' });
+          store.deleteUser(id); console.log(`[admin] ${me.username} がユーザー #${id} を削除`); return send(res, 200, { ok: true });
+        }
+        if (req.method === 'POST' && m[2] === 'password') { const { password } = await readJson(req); store.setPassword(id, password); return send(res, 200, { ok: true }); }
+        if (req.method === 'POST' && m[2] === 'mood-reset') { store.resetMood(id); return send(res, 200, { ok: true }); }
+      }
+      return send(res, 404, { error: 'not found' });
+    }
+
+    // ここから先(返事・動き・声)は、ログインした人だけ
+    let user = null;
+    if (url === '/api/chat' || url === '/api/act' || url === '/api/tts') {
+      user = currentUser(req);
+      if (!user) return send(res, 401, { error: 'login required' });
+    }
+
+    if (req.method === 'POST' && url === '/api/chat') {
       const { text, history } = await readJson(req);
       if (!text || typeof text !== 'string') return send(res, 400, { error: 'text required' });
       const t0 = Date.now();
+      const turn = await userTurn(user, text.slice(0, 300));          // 話しかけ方を分析して、気分を更新する(/api/act と共有)
+      const system = SYSTEM + moodLib.guide(turn.raw, turn.refused);
       let raw, via = 'cf';
       try {
         if (!CF_ACCOUNT || !CF_TOKEN) throw new Error('no cloudflare key');
-        raw = await runCloudflare(text.slice(0, 500), history);
+        raw = await runCloudflare(text.slice(0, 500), history, system);
       } catch (e) {
         console.log(`[chat] cloudflare failed (${e.message}) -> claude`);
-        via = 'claude'; raw = await runClaude(buildPrompt(text.slice(0, 500), history));
+        via = 'claude'; raw = await runClaude(buildPrompt(text.slice(0, 500), history), system);
       }
       const out = parseReply(raw);
-      console.log(`[chat] ${via} ${Date.now() - t0}ms ${out.emotion} [${out.actions}] ${out.reply}`);
+      if (turn.refused) out.actions = ['sulk'];
+      if (turn.raw.anger >= 60 && ['neutral', 'happy'].includes(out.emotion)) out.emotion = 'angry';
+      else if (turn.raw.sadness >= 60 && ['neutral', 'happy'].includes(out.emotion)) out.emotion = 'sad';
+      out.mood = turn.mood; out.moodLabel = turn.moodLabel;
+      console.log(`[chat] ${user.username} ${via} ${Date.now() - t0}ms mood=${turn.mood.joy}/${turn.mood.anger}/${turn.mood.sadness} ${out.emotion} [${out.actions}]${turn.refused ? ' (ことわった)' : ''} ${out.reply}`);
       return send(res, 200, out);
     }
-    if (req.method === 'POST' && req.url === '/api/act') {          // 動きだけを速く判断する(Jev)。キーがなければ source:'none'
+    if (req.method === 'POST' && url === '/api/act') {          // 動きと話しかけ方を速く判断する(Jev)。キーがなくても、気分の更新はする
       const { text } = await readJson(req);
-      if (!JEV_KEY || !text || typeof text !== 'string') return send(res, 200, { actions: [], source: 'none' });
+      if (!text || typeof text !== 'string') return send(res, 200, { actions: [], source: 'none' });
       const t0 = Date.now();
-      try {
-        const out = await jevAct(text.slice(0, 300));
-        console.log(`[act] ${Date.now() - t0}ms [${out.actions}]${out.spontaneous ? ' (自然な反応)' : ''}`);
-        return send(res, 200, { ...out, source: 'jev' });
-      } catch (e) { console.log(`[act] failed: ${e.message}`); return send(res, 200, { actions: [], source: 'none' }); }
+      const t = await userTurn(user, text.slice(0, 300));
+      console.log(`[act] ${user.username} ${Date.now() - t0}ms [${t.actions}]${t.spontaneous ? ' (自然な反応)' : ''}${t.refused ? ' (ことわった)' : ''} ${t.manner}/${t.topic} mood=${t.mood.joy}/${t.mood.anger}/${t.mood.sadness}`);
+      return send(res, 200, { actions: t.actions, spontaneous: t.spontaneous, refused: t.refused, source: t.source, manner: t.manner, mood: t.mood, moodLabel: t.moodLabel });
     }
-    if (req.method === 'POST' && req.url === '/api/tts') {
+    if (req.method === 'POST' && url === '/api/tts') {
       const { text, emotion } = await readJson(req);
       if (!text || typeof text !== 'string') return send(res, 400, { error: 'text required' });
-      const t0 = Date.now();
-      const ckey = `${emotion || ''}|${text}`;
-      if (ttsCache.has(ckey)) { res.writeHead(200, { 'content-type': 'audio/mpeg', 'cache-control': 'no-store' }); return res.end(ttsCache.get(ckey)); }
-      const synth = (base, id, ms) => fetch(`${base}/speak`, {
-        method: 'POST', headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ text: text.slice(0, 300), speaker_id: id, ...(VOICE[emotion] || {}) }),
-        signal: AbortSignal.timeout(ms),
-      });
-      const cpu = [ROUTER, SPEAKER_ID, 'cpu'], cloud = [FALLBACK_ROUTER, FALLBACK_SPEAKER_ID, 'cloud'];
-      const [first, second] = TTS_PRIMARY === 'cloud' ? [cloud, cpu] : [cpu, cloud];
-      let r, via = first[2];
-      try { r = await synth(first[0], first[1], TTS_TIMEOUT_MS); if (!r.ok) throw new Error(`status ${r.status}`); }
-      catch (e) {   // 主が遅い/落ちているときは予備へ
-        console.log(`[tts] ${first[2]} failed (${e.message}) -> ${second[2]}`);
-        via = second[2]; r = await synth(second[0], second[1], 30000);
-      }
-      if (!r.ok) return send(res, 502, { error: `tts ${r.status}` });
-      const buf = Buffer.from(await r.arrayBuffer());
-      console.log(`[tts] ${via} ${Date.now() - t0}ms ${buf.length}B`);
-      if (text.length <= 16) { ttsCache.set(ckey, buf); if (ttsCache.size > 60) ttsCache.delete(ttsCache.keys().next().value); }   // 短い定型の一言だけ覚えておく
+      const buf = await ttsBuffer(text, emotion);
       res.writeHead(200, { 'content-type': 'audio/mpeg', 'cache-control': 'no-store' });
       return res.end(buf);
     }
     send(res, 404, { error: 'not found' });
   } catch (e) {
-    console.error('[error]', e.message);
-    send(res, 500, { error: e.message });
+    if (!e.status) console.error('[error]', e.message);
+    send(res, e.status || 500, { error: e.message });
   }
 }).listen(PORT, () => {
   // 定型の一言(index.htmlのACKS)の声を先に作っておく → 動きの依頼にすぐ声で答えられる
-  (async () => { for (const t of ['はーい！', 'こうかな？', 'えへへ、どうかな？', 'まかせて！', 'いくよー！', 'うんうん', 'ふぁ…おやすみなさい', 'すぅ…おやすみ…', 'えっ、こわい話…？ひえぇ…', 'きゃー！こわいよー！', 'きゅぅ…', 'ばたん…', 'うぅ…ぐすん', 'あはは！', 'えへへ、あはは！', 'むーっ！', 'はーい', 'よいしょ…', 'ふぁぁ…ねむい…']) {
-    try { await fetch(`http://127.0.0.1:${PORT}/api/tts`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ text: t, emotion: 'happy' }) }).then(r => r.arrayBuffer()); } catch (_) {} } })();
+  (async () => {
+    const happy = ['はーい！', 'こうかな？', 'えへへ、どうかな？', 'まかせて！', 'いくよー！', 'うんうん', 'ふぁ…おやすみなさい', 'すぅ…おやすみ…', 'えっ、こわい話…？ひえぇ…', 'きゃー！こわいよー！', 'きゅぅ…', 'ばたん…', 'うぅ…ぐすん', 'あはは！', 'えへへ、あはは！', 'むーっ！', 'はーい', 'よいしょ…', 'ふぁぁ…ねむい…'];
+    const grumpy = ['はいはい…', 'もう、しかたないなぁ', 'むぅ…やればいいんでしょ', 'ふんっ、やるけどさ'];   // ちょっと不機嫌なときの一言(いかり30以上)
+    for (const [list, emo] of [[happy, 'happy'], [grumpy, 'angry']]) for (const t of list) { try { await ttsBuffer(t, emo); } catch (_) {} }
+  })();
   console.log(`orb-api listening on ${PORT} (model=${MODEL}, chat=${CF_ACCOUNT && CF_TOKEN ? 'cf:' + CF_MODEL + (CF_GATEWAY ? '@' + CF_GATEWAY : '') : 'claude'}, tts=${TTS_PRIMARY}, jev=${JEV_KEY ? 'on' : 'off'}, speaker=${SPEAKER_ID}@${ROUTER}, fallback=${FALLBACK_SPEAKER_ID}@${FALLBACK_ROUTER})`);
 });

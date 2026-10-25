@@ -19,6 +19,31 @@
   #say { flex: 1 1 180px; min-width: 0; font: inherit; color: #def; background: #0a1520; border: 1px solid #357; border-radius: 10px; padding: 10px 12px; min-height: 44px; box-sizing: border-box; }
   #log { position: fixed; top: calc(8px + env(safe-area-inset-top)); left: 12px; right: 12px; font: 12px/1.5 system-ui, sans-serif; color: #7ab; pointer-events: none; white-space: pre-wrap; }
   #log.hidden { display: none; }
+  button.sm { min-height: 36px; padding: 6px 10px; font-size: 13px; }
+  #who { display: none; align-items: center; gap: 8px; flex-wrap: wrap; justify-content: center; width: 100%; font-size: 13px; color: #9bd; }
+  #who.on { display: flex; }
+  #moodbar { display: inline-flex; gap: 6px; align-items: center; }
+  .mb { display: inline-flex; align-items: center; gap: 3px; }
+  .mb i { display: inline-block; width: 38px; height: 6px; border-radius: 3px; background: #1b2a38; overflow: hidden; position: relative; }
+  .mb i b { position: absolute; left: 0; top: 0; bottom: 0; width: 0; transition: width .6s; }
+  .overlay { position: fixed; inset: 0; z-index: 20; display: flex; align-items: center; justify-content: center; padding: 16px; background: rgba(0,4,10,.92); font: 14px/1.5 system-ui, sans-serif; color: #cde; overflow-y: auto; }
+  .overlay[hidden] { display: none; }
+  .card { width: min(380px, 100%); box-sizing: border-box; display: flex; flex-direction: column; gap: 10px; padding: 22px; border: 1px solid #357; border-radius: 16px; background: #0a1520; }
+  .card.wide { width: min(640px, 100%); max-height: calc(100vh - 32px); overflow-y: auto; }
+  .card h1 { margin: 0 0 4px; font-size: 18px; color: #def; font-weight: 600; }
+  .card input, .card select { font: inherit; color: #def; background: #06101a; border: 1px solid #357; border-radius: 10px; padding: 10px 12px; min-height: 44px; box-sizing: border-box; min-width: 0; }
+  .card .err { min-height: 1.4em; color: #f99; font-size: 13px; }
+  .card .ok { color: #7e9; }
+  button.primary { background: #0a6; border-color: #3fc; color: #fff; }
+  button.danger { border-color: #a45; color: #f99; }
+  .row { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
+  .row > input { flex: 1 1 130px; }
+  .urow { display: grid; grid-template-columns: 1fr auto; gap: 6px 10px; padding: 10px 0; border-top: 1px solid #1d3347; align-items: center; }
+  .urow .nm { font-weight: 600; color: #def; }
+  .urow .sub { font-size: 12px; color: #7ab; grid-column: 1 / -1; }
+  .urow .acts { display: flex; gap: 6px; flex-wrap: wrap; justify-content: flex-end; }
+  .tag { font-size: 11px; padding: 1px 7px; border-radius: 8px; border: 1px solid #357; color: #9bd; margin-left: 6px; }
+  .tag.admin { border-color: #c93; color: #fc6; }
 </style>
 </head>
 <body>
@@ -43,6 +68,40 @@
   <label>大きさ<input id="size" type="range" min="25" max="100" value="60"></label>
   <label>位置<input id="pos" type="range" min="0" max="100" value="50"></label>
   <button id="hide">UIを隠す</button>
+  <div id="who">
+    <span id="meName"></span>
+    <span id="moodbar" title="ルミの気分(よろこび・いかり・かなしみ)">
+      <span class="mb">😊<i><b id="mbJ" style="background:#fc4"></b></i></span>
+      <span class="mb">😠<i><b id="mbA" style="background:#f55"></b></i></span>
+      <span class="mb">😢<i><b id="mbS" style="background:#5af"></b></i></span>
+    </span>
+    <button id="adminBtn" class="sm" style="display:none">管理</button>
+    <button id="pwBtn" class="sm">パスワード変更</button>
+    <button id="logoutBtn" class="sm">ログアウト</button>
+  </div>
+</div>
+<div id="login" class="overlay" hidden>
+  <form id="loginForm" class="card">
+    <h1>ルミにログイン</h1>
+    <input id="lgUser" name="username" autocomplete="username" autocapitalize="none" autocorrect="off" spellcheck="false" placeholder="ユーザー名" required>
+    <input id="lgPass" name="password" type="password" autocomplete="current-password" placeholder="パスワード" required>
+    <div id="lgErr" class="err"></div>
+    <button type="submit" class="primary">ログイン</button>
+  </form>
+</div>
+<div id="admin" class="overlay" hidden>
+  <div class="card wide">
+    <div class="row" style="justify-content:space-between"><h1>ユーザー管理</h1><button id="admClose" class="sm">閉じる</button></div>
+    <form id="addForm" class="row">
+      <input id="adUser" placeholder="ユーザー名(英数字 3〜32)" autocapitalize="none" autocomplete="off" spellcheck="false" required>
+      <input id="adPass" type="text" placeholder="パスワード(8文字以上)" autocomplete="off" autocapitalize="none" spellcheck="false" required>
+      <button type="button" id="adGen" class="sm">自動生成</button>
+      <select id="adRole"><option value="user">一般</option><option value="admin">管理者</option></select>
+      <button type="submit" class="primary sm">追加</button>
+    </form>
+    <div id="adMsg" class="err"></div>
+    <div id="adList"></div>
+  </div>
 </div>
 <script type="module" src="lumi3d.js"></script>
 <script>
@@ -841,6 +900,8 @@ function ensureAudio() {
 const chatHistory = [];     // {role:'user'|'ai', text}
 let emotion = 'neutral';
 let emotionTimer = null;
+let me = null, mood = { joy: 50, anger: 0, sadness: 0 };   // ログイン中のユーザーと、ルミの気分(サーバーが話しかけ方から更新する)
+const baseEmo = () => mood.anger >= 45 ? 'angry' : mood.sadness >= 50 ? 'sad' : mood.joy >= 80 ? 'happy' : 'neutral';   // 何も話していないときの顔つき
 
 // --- マイク → 16kHz PCM → WebSocket(音声区間だけ送る) ---
 const WORKLET = "class P extends AudioWorkletProcessor{constructor(){super();this.b=new Float32Array(2048);this.n=0}process(i){const c=i[0][0];if(!c)return true;for(let k=0;k<c.length;k++){this.b[this.n++]=c[k];if(this.n===2048){this.port.postMessage(this.b.slice());this.n=0}}return true}}registerProcessor('pcm',P)";
@@ -970,7 +1031,8 @@ async function getReply(text) {
   if (CONFIG.chatEndpoint) {
     const r = await fetch(CONFIG.chatEndpoint, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ text, history: chatHistory.slice(-8) }) });
     if (!r.ok) throw new Error('chat ' + r.status);
-    return await r.json();
+    const j = await r.json(); setMood(j.mood);
+    return j;
   }
   await new Promise(r => setTimeout(r, 900));
   return { reply: DEMO[Math.floor(Math.random() * DEMO.length)], emotion: 'happy', actions: [] };
@@ -979,23 +1041,25 @@ const ACKS = ['はーい！', 'こうかな？', 'えへへ、どうかな？', 
 // 動きに合う定型の一言(声は事前に作ってあるので、すぐ返せる)。ここにない動きは ACKS から選ぶ
 const ACK_BY = { sleep: ['ふぁ…おやすみなさい', 'すぅ…おやすみ…'], scared: ['えっ、こわい話…？ひえぇ…', 'きゃー！こわいよー！'], faint: ['きゅぅ…', 'ばたん…'],
   cry: ['うぅ…ぐすん'], laugh: ['あはは！', 'えへへ、あはは！'], angry: ['むーっ！'], lower: ['はーい'], sit: ['よいしょ…'], yawn: ['ふぁぁ…ねむい…'] };
-const pickAck = (a) => { const l = ACK_BY[a && a[0]] || ACKS; return l[Math.floor(Math.random() * l.length)]; };
+const GRUMPY_ACKS = ['はいはい…', 'もう、しかたないなぁ', 'むぅ…やればいいんでしょ', 'ふんっ、やるけどさ'];   // いかりが30以上のときの一言
+const pickAck = (a) => { const l = mood.anger >= 30 ? GRUMPY_ACKS : (ACK_BY[a && a[0]] || ACKS); return l[Math.floor(Math.random() * l.length)]; };
 async function handleUtterance(text) {
   if (state === 'thinking' || state === 'speaking') return;
   ensureAudio();
   const myTurn = ++turn;
   setState('thinking'); level = 0; log('あなた: ' + text); setUserCap(text, false);
-  const fa = fastActions(text); fastPlayed = fa.join(','); actDecided = false; if (fa.length) playActions(fa);   // すぐ動き始める
+  const fa = mood.anger >= 50 ? [] : fastActions(text); fastPlayed = fa.join(','); actDecided = false; if (fa.length) playActions(fa);   // すぐ動き始める
   fetch(CONFIG.actEndpoint, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ text }) })   // 動きの判断(Jev)を、返答の生成と並べて呼ぶ
     .then(r => r.ok ? r.json() : null).catch(() => null).then(j => {
+      if (j) setMood(j.mood);
       if (!j || j.source !== 'jev' || myTurn !== turn) return;                       // Jevが使えないときは、返答APIの動きを使う
       actDecided = true;
       if (!fa.length && j.actions.length) { playActions(j.actions); fastPlayed = j.actions.join(','); }
     });
-  clearTimeout(emotionTimer); emotion = 'neutral';
+  clearTimeout(emotionTimer); emotion = baseEmo();
   let out;
   if (fa.length && text.length <= 16 && CONFIG.chatEndpoint) {      // 短くはっきりした動きの依頼は、定型の一言ですぐ返す(声も先読みしてあるので遅れない)
-    out = { reply: pickAck(fa), emotion: ['scared', 'cry', 'faint'].includes(fa[0]) ? 'sad' : 'happy', actions: fa };
+    out = { reply: pickAck(fa), emotion: mood.anger >= 30 ? 'angry' : ['scared', 'cry', 'faint'].includes(fa[0]) ? 'sad' : 'happy', actions: fa };
     chatHistory.push({ role: 'user', text }, { role: 'ai', text: out.reply });
     return speak(out.reply, out.emotion, out.actions);
   }
@@ -1026,7 +1090,7 @@ function stopSpeaking() {
   if (playing) { try { playing.onended = null; playing.stop(); } catch (_) {} playing = null; }
   if (curU) { curU.onend = curU.onerror = null; curU = null; }
   try { speechSynthesis.cancel(); } catch (_) {}
-  level = 0; clearTimeout(emotionTimer); emotion = 'neutral';           // 動きは止めない(自分の声に反応して動きが消えるのを防ぐ)
+  level = 0; clearTimeout(emotionTimer); emotion = baseEmo();           // 動きは止めない(自分の声に反応して動きが消えるのを防ぐ)
   if (replyCap) replyCap.endAt = performance.now();
 }
 async function speak(text, emo, actions) {
@@ -1036,7 +1100,7 @@ async function speak(text, emo, actions) {
   setState('speaking'); log('ルミ: ' + text);
   const done = () => {
     level = 0; playing = null; replyCap.endAt = performance.now();
-    emotionTimer = setTimeout(() => { emotion = 'neutral'; }, 5000);
+    emotionTimer = setTimeout(() => { emotion = baseEmo(); }, 5000);
     if (micOn) { resetStt(); } else setState('idle');
   };
   try {
@@ -1092,6 +1156,100 @@ try {   // 確認用: ?char=mascot3d&mode=plain&spin=1.57(回転を固定)
   if (qs.get('act')) setTimeout(() => playActions(qs.get('act').split(',')), 800);   // 確認用: ?act=raise_right,spin
   if (qs.get('hideui')) { $('ui').classList.add('hidden'); $('log').classList.add('hidden'); }
 } catch (_) {}
+
+/* ===== ログイン・ユーザー管理・気分 ===== */
+const _fetch = window.fetch.bind(window);
+window.fetch = async (...a) => {          // ログインが切れたら(401)、ログイン画面を出す
+  const r = await _fetch(...a);
+  const u = String(a[0]); if (r.status === 401 && u.startsWith('/api/') && !u.startsWith('/api/auth/')) showLogin();
+  return r;
+};
+const jsend = (method, url, body) => _fetch(url, { method, headers: { 'content-type': 'application/json' }, body: body === undefined ? undefined : JSON.stringify(body) });
+function setMood(m) {
+  if (!m || typeof m.anger !== 'number') return;
+  mood = { joy: m.joy, anger: m.anger, sadness: m.sadness };
+  $('mbJ').style.width = mood.joy + '%'; $('mbA').style.width = mood.anger + '%'; $('mbS').style.width = mood.sadness + '%';
+  $('moodbar').title = `ルミの気分  よろこび ${mood.joy} / いかり ${mood.anger} / かなしみ ${mood.sadness}`;
+  if (state === 'idle') emotion = baseEmo();
+}
+function showLogin(msg) {
+  me = null; if (micOn) stopMic();
+  $('who').classList.remove('on'); $('login').hidden = false; $('lgErr').textContent = msg || '';
+  $('lgPass').value = ''; setTimeout(() => $('lgUser').focus(), 50);
+}
+function applyAuth(j) {
+  me = j.user; $('login').hidden = true; $('lgPass').value = '';
+  $('meName').textContent = '👤 ' + me.username; $('adminBtn').style.display = me.role === 'admin' ? '' : 'none';
+  $('who').classList.add('on'); setMood(j.mood);
+}
+$('loginForm').addEventListener('submit', async (e) => {
+  e.preventDefault(); $('lgErr').textContent = '';
+  try {
+    const r = await jsend('POST', '/api/auth/login', { username: $('lgUser').value.trim(), password: $('lgPass').value });
+    const j = await r.json();
+    if (!r.ok) { $('lgErr').textContent = j.error || 'ログインできませんでした'; $('lgPass').value = ''; return; }
+    applyAuth(j);
+  } catch (_) { $('lgErr').textContent = 'つながりませんでした'; }
+});
+$('logoutBtn').onclick = async () => { try { await jsend('POST', '/api/auth/logout'); } catch (_) {} showLogin(); };
+$('pwBtn').onclick = async () => {
+  const current = prompt('いまのパスワード'); if (!current) return;
+  const next = prompt('新しいパスワード(8文字以上)'); if (!next) return;
+  const r = await jsend('POST', '/api/auth/password', { current, next }); const j = await r.json();
+  alert(r.ok ? 'パスワードを変えました' : (j.error || '変えられませんでした'));
+};
+async function refreshMe() {
+  try {
+    const r = await _fetch('/api/auth/me');
+    if (r.status === 401) { if (!me) showLogin(); else showLogin('ログインの有効期限が切れました'); return; }
+    if (r.ok) applyAuth(await r.json());
+  } catch (_) {}
+}
+refreshMe(); setInterval(() => { if (me) refreshMe(); }, 60000);   // 気分は時間がたつと落ち着くので、ときどき読み直す
+
+// --- 管理(ユーザー登録・削除・パスワード再設定・気分リセット) ---
+const fmtDate = (t) => t ? new Date(t).toLocaleString('ja-JP', { month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' }) : 'まだ';
+async function loadUsers() {
+  const r = await jsend('GET', '/api/admin/users'); const j = await r.json();
+  const box = $('adList'); box.textContent = '';
+  if (!r.ok) { $('adMsg').textContent = j.error || '読み込めませんでした'; return; }
+  for (const u of j.users) {
+    const row = document.createElement('div'); row.className = 'urow';
+    const nm = document.createElement('div'); nm.className = 'nm'; nm.textContent = u.username;
+    const tag = document.createElement('span'); tag.className = 'tag' + (u.role === 'admin' ? ' admin' : ''); tag.textContent = u.role === 'admin' ? '管理者' : '一般'; nm.appendChild(tag);
+    const acts = document.createElement('div'); acts.className = 'acts';
+    const mk = (label, cls, fn) => { const b = document.createElement('button'); b.className = 'sm ' + cls; b.textContent = label; b.onclick = fn; acts.appendChild(b); };
+    mk('PW再設定', '', async () => {
+      const pw = prompt(`${u.username} の新しいパスワード(8文字以上)`); if (!pw) return;
+      const rr = await jsend('POST', `/api/admin/users/${u.id}/password`, { password: pw }); const jj = await rr.json();
+      $('adMsg').className = 'err' + (rr.ok ? ' ok' : ''); $('adMsg').textContent = rr.ok ? `${u.username} のパスワードを変えました` : jj.error;
+    });
+    mk('気分リセット', '', async () => { await jsend('POST', `/api/admin/users/${u.id}/mood-reset`); loadUsers(); });
+    if (me && u.id !== me.id) mk('削除', 'danger', async () => {
+      if (!confirm(`${u.username} を削除しますか?`)) return;
+      const rr = await jsend('DELETE', `/api/admin/users/${u.id}`); const jj = await rr.json();
+      if (!rr.ok) { $('adMsg').className = 'err'; $('adMsg').textContent = jj.error; } else loadUsers();
+    });
+    const sub = document.createElement('div'); sub.className = 'sub';
+    sub.textContent = `最終ログイン ${fmtDate(u.last_login)}  ／  気分 😊${u.mood.joy} 😠${u.mood.anger} 😢${u.mood.sadness}`;
+    row.append(nm, acts, sub); box.appendChild(row);
+  }
+}
+$('adminBtn').onclick = () => { $('admin').hidden = false; $('adMsg').textContent = ''; loadUsers(); };
+$('admClose').onclick = () => { $('admin').hidden = true; };
+$('adGen').onclick = () => {
+  const cs = 'abcdefghijkmnpqrstuvwxyzABCDEFGHJKLMNPQRSTUVWXYZ23456789', a = new Uint32Array(14); crypto.getRandomValues(a);
+  $('adPass').value = Array.from(a, v => cs[v % cs.length]).join('');
+};
+$('addForm').addEventListener('submit', async (e) => {
+  e.preventDefault();
+  const username = $('adUser').value.trim(), password = $('adPass').value;
+  const r = await jsend('POST', '/api/admin/users', { username, password, role: $('adRole').value }); const j = await r.json();
+  $('adMsg').className = 'err' + (r.ok ? ' ok' : '');
+  if (!r.ok) { $('adMsg').textContent = j.error || '追加できませんでした'; return; }
+  $('adMsg').textContent = `${username} を追加しました。パスワードを本人に伝えてください: ${password}`;
+  $('adUser').value = ''; $('adPass').value = ''; loadUsers();
+});
 applyLogVisibility(); $('mode').addEventListener('change', applyLogVisibility); $('mode').addEventListener('input', applyLogVisibility);
 log();
 </script>

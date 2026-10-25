@@ -1463,6 +1463,7 @@ async function refreshJobs() {
     if (!$('jobs').hidden) renderJobs();
   } catch (_) {}
 }
+const openJobs = new Set(), autoOpened = new Set();
 const seenJobs = () => { try { return new Set(JSON.parse(localStorage.getItem('seenJobs') || '[]')); } catch (_) { return new Set(); } };
 function markSeen() { try { const s = seenJobs(); jobsInfo.jobs.forEach(j => { if (j.status === 'done') s.add(j.id); }); localStorage.setItem('seenJobs', JSON.stringify([...s].slice(-200))); } catch (_) {} }
 function renderJobs() {
@@ -1478,7 +1479,7 @@ function renderJobs() {
     sub.textContent = live ? `${fmtSec((jobsInfo.now + (performance.now() - jobsInfo.t) - j.created_at) / 1000)} 経過` : '';
     row.append(nm, document.createElement('div'), sub);
     if (j.status === 'done') {
-      const dt = document.createElement('details'); dt.open = !seenJobs().has(j.id); const sm = document.createElement('summary'); sm.className = 'sub'; sm.style.cssText = 'color:#9bd;cursor:pointer'; sm.textContent = j.summary || '結果を見る'; dt.appendChild(sm);
+      const dt = document.createElement('details'); if (!seenJobs().has(j.id) && !autoOpened.has(j.id)) { autoOpened.add(j.id); openJobs.add(j.id); } dt.open = openJobs.has(j.id); dt.ontoggle = () => { if (dt.open) openJobs.add(j.id); else openJobs.delete(j.id); };   // 1秒ごとに描き直しても、開いた状態を保つ const sm = document.createElement('summary'); sm.className = 'sub'; sm.style.cssText = 'color:#9bd;cursor:pointer'; sm.textContent = j.summary || '結果を見る'; dt.appendChild(sm);
       const body = document.createElement('div'); body.className = 'sub'; body.style.cssText = 'white-space:pre-wrap;margin:6px 0;color:#cde;line-height:1.6'; body.textContent = j.detail || j.summary; dt.appendChild(body);
       for (const u of (j.sources || []).slice(0, 5)) { if (!/^https?:\/\//.test(u)) continue; const a = document.createElement('a'); a.href = u; a.target = '_blank'; a.rel = 'noopener noreferrer'; a.textContent = u.replace(/^https?:\/\//, '').slice(0, 60); a.style.cssText = 'display:block;font-size:11px;color:#6cf;word-break:break-all'; dt.appendChild(a); }
       row.appendChild(dt);
@@ -1489,7 +1490,7 @@ function renderJobs() {
 $('jobBadge').onclick = () => { $('jobs').hidden = false; refreshJobs().then(renderJobs); renderJobs(); };
 $('jobsClose').onclick = () => { $('jobs').hidden = true; markSeen(); refreshJobs(); };
 $('jobsClear').onclick = async () => { await jsend('POST', '/api/jobs/clear'); refreshJobs(); };
-setInterval(() => { if (!me) return; const every = jobsInfo.pending ? 8000 : 90000; if (performance.now() - jobsAt > every) refreshJobs(); if (!$('jobs').hidden) renderJobs(); }, 1000);
+setInterval(() => { if (!me) return; const every = jobsInfo.pending ? 8000 : 90000; if (performance.now() - jobsAt > every) refreshJobs(); if (!$('jobs').hidden && jobsInfo.pending) renderJobs(); }, 1000);
 
 // --- あとで調べて報告する: 裏でヘッドレスClaudeが調べ、終わったらSSE(pub/sub)で知らせてくれる。ルミが静かなときに報告する ---
 let reportPending = true, reportBusy = false, lastReportPoll = performance.now(), evSrc = null;

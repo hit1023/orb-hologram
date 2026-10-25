@@ -125,6 +125,8 @@
   <div class="card wide">
     <div class="row" style="justify-content:space-between"><h1>ユーザー管理</h1><button id="admClose" class="sm">閉じる</button></div>
     <div class="card" style="width:100%;padding:12px;gap:8px;background:#06101a;margin-bottom:6px">
+      <div style="font-weight:600;color:#def">いま使っているもの <button id="engRef" class="sm" type="button">更新</button></div>
+      <div id="engBox" class="sub" style="line-height:1.7">…</div>
       <div style="font-weight:600;color:#def">ルミの設定</div>
       <label><input type="checkbox" id="sResearch"> あとで調べて報告する(裏でClaudeがWeb検索)</label>
       <label><input type="checkbox" id="sTopic"> ルミから話題を出す(ニュース・天気)</label>
@@ -1639,7 +1641,19 @@ async function loadUsers() {
     row.append(nm, acts, sub); box.appendChild(row);
   }
 }
-$('adminBtn').onclick = () => { $('admin').hidden = false; $('adMsg').textContent = ''; loadUsers(); loadSettingsForm(); };
+async function loadEngines() {
+  const box = $('engBox'); box.textContent = '';
+  try {
+    const r = await _fetch('/api/admin/engines'); if (!r.ok) throw 0; const e = await r.json();
+    const ago = t => { const s = Math.round((Date.now() - t) / 1000); return s < 90 ? `${s}秒前` : s < 5400 ? `${Math.round(s / 60)}分前` : `${Math.round(s / 3600)}時間前`; };
+    const line = (name, d, ok) => { const row = document.createElement('div'); const l = d.last;
+      row.textContent = `${name}: ${l ? (ok(l) ? '✅' : '⚠️') + ' ' + l.via + ' (' + l.ms + 'ms, ' + ago(l.at) + ')' : '(まだ使っていません)'}  ／ 通常=${d.primary}  予備=${d.fallback}` + (l && l.why ? `  ／ 理由: ${l.why}` : ''); box.appendChild(row); };
+    line('返事', e.chat, l => l.via === 'cf' || l.via === 'egg'); line('声', e.tts, l => !l.why);
+    const o = document.createElement('div'); o.textContent = `動きの判断(Jev): ${e.jev ? 'ON' : 'OFF'}  ／ 調べもの: ${e.research}  ／ Zenoh: ${e.zenoh ? 'ON' : 'OFF'}`; box.appendChild(o);
+  } catch (_) { box.textContent = '取得できませんでした'; }
+}
+$('engRef').onclick = loadEngines;
+$('adminBtn').onclick = () => { $('admin').hidden = false; $('adMsg').textContent = ''; loadUsers(); loadSettingsForm(); loadEngines(); };
 $('admClose').onclick = () => { $('admin').hidden = true; };
 $('adShow').onclick = () => { const p = $('adPass'); p.type = p.type === 'password' ? 'text' : 'password'; $('adShow').textContent = p.type === 'password' ? '表示' : '隠す'; };
 $('adGen').onclick = () => {

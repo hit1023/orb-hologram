@@ -306,6 +306,10 @@ const VOICE = {   // 感情ごとの声の調子(Aivisルーターの speed / in
   shy: { speed: 0.95, intonation: 1.0 }, neutral: {},
 };
 
+// いま実際に使っているもの(管理画面に表示)。最後に使った方法・時間・失敗の理由を覚えておく
+const ENG = { chat: null, tts: null };
+const mark = (k, v) => { ENG[k] = { ...v, at: Date.now() }; };
+
 // 声をつくる(Aivis)。短い定型の一言は覚えておく
 async function ttsBuffer(text, emotion) {
   const t0 = Date.now();
@@ -322,11 +326,12 @@ async function ttsBuffer(text, emotion) {
   try { r = await synth(first[0], first[1], TTS_TIMEOUT_MS); if (!r.ok) throw new Error(`status ${r.status}`); }
   catch (e) {   // 主が遅い/落ちているときは予備へ
     console.log(`[tts] ${first[2]} failed (${e.message}) -> ${second[2]}`);
-    via = second[2]; r = await synth(second[0], second[1], 30000);
+    via = second[2]; r = await synth(second[0], second[1], 30000); ENG.ttsWhy = `${first[2]}が失敗(${e.message})`;
   }
   if (!r.ok) throw Object.assign(new Error(`tts ${r.status}`), { status: 502 });
   const buf = Buffer.from(await r.arrayBuffer());
   console.log(`[tts] ${via} ${Date.now() - t0}ms ${buf.length}B`);
+  mark('tts', { via, ms: Date.now() - t0, why: via === first[2] ? '' : ENG.ttsWhy || '' });
   if (text.length <= 16) { ttsCache.set(ckey, buf); if (ttsCache.size > 80) ttsCache.delete(ttsCache.keys().next().value); }
   return buf;
 }
@@ -443,6 +448,7 @@ http.createServer(async (req, res) => {
       const me = currentUser(req);
       if (!me) return send(res, 401, { error: 'login required' });
       if (me.role !== 'admin') return send(res, 403, { error: '管理者だけが使えます' });
+      if (req.method === 'GET' && url === '/api/admin/engines') return send(res, 200, { chat: { primary: CF_ACCOUNT && CF_TOKEN ? `Cloudflare Workers AI (${CF_MODEL.split('/').pop()})` : 'Claude CLI', fallback: 'Claude CLI (' + MODEL + ')', last: ENG.chat }, tts: { primary: TTS_PRIMARY === 'cloud' ? 'Aivis Cloud' : 'Aivis CPU版(h-2)', fallback: TTS_PRIMARY === 'cloud' ? 'Aivis CPU版(h-2)' : 'Aivis Cloud', last: ENG.tts }, jev: !!JEV_KEY, research: 'Claude CLI (' + MODEL + ', Web検索のみ)', zenoh: bus.zenohEnabled() });
       if (req.method === 'GET' && url === '/api/admin/settings') return send(res, 200, { settings: store.getSettings() });
       if (req.method === 'POST' && url === '/api/admin/settings') { const b = await readJson(req); console.log(`[admin] ${me.username} が設定を変更 ${JSON.stringify(b)}`); return send(res, 200, { settings: store.setSettings(b) }); }
       if (req.method === 'GET' && url === '/api/admin/users')
@@ -557,7 +563,7 @@ http.createServer(async (req, res) => {
         if (!CF_ACCOUNT || !CF_TOKEN) throw new Error('no cloudflare key');
         raw = await runCloudflare(text.slice(0, 500), hist, system);
       } catch (e) {
-        console.log(`[chat] cloudflare failed (${e.message}) -> claude`);
+        console.log(`[chat] cloudflare failed (${e.message}) -> claude`); ENG.chatWhy = `Cloudflareが失敗(${e.message})`;
         via = 'claude'; raw = await runClaude(buildPrompt(text.slice(0, 500), hist), system);
       }
       const out = parseReply(raw);
@@ -590,6 +596,7 @@ http.createServer(async (req, res) => {
       memory.remember(user.id, text.slice(0, 300), out.reply, out.emotion);   // 履歴に保存して、あとから思い出せるようにする
       analyzeFeelings(user, turn.raw).catch(() => {});
       extractInterests(user).catch(() => {});                                  // 興味のあるキーワードも、ときどき更新                         // 履歴×気分から、この人への本音を分析(裏で)
+      mark('chat', { via, ms: Date.now() - t0, why: via === 'claude' ? (ENG.chatWhy || '') : '' });
       console.log(`[chat] ${user.username} ${via} ${Date.now() - t0}ms ask=${turn.askFeeling ? 1 : 0} mem=${mems.length} mood=${turn.mood.joy}/${turn.mood.anger}/${turn.mood.sadness}/♥${turn.mood.affinity} ${turn.stance} ${out.emotion} [${out.actions}]${turn.refused ? ' (ことわった)' : ''} ${out.reply}`);
       return send(res, 200, out);
     }

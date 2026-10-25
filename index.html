@@ -292,13 +292,13 @@ function layoutCaption(text, base, maxW) {
 
 let pyrActive = false;   // ピラミッド表示中は、4面それぞれに小さく・面の幅に収めて字幕を出す(全画面幅で描くと、4面が重なってめちゃくちゃになる)
 function drawCaption(R, cap) {
-  let base = pyrActive ? Math.max(11, Math.min(R * 0.2, 26)) : Math.max(18, Math.min(R * 0.30, W * 0.06));
-  const maxW = pyrActive ? Math.max(R * 3.4, 120) : W * 0.88;
+  let base = pyrActive ? Math.max(18, Math.min(R * 0.42, 60)) : Math.max(18, Math.min(R * 0.30, W * 0.06));
+  const maxW = pyrActive ? Math.max(R * 4.6, 180) : W * 0.88;
   ctx.save();
   if (pyrActive && pyrTextMir) ctx.scale(-1, 1);   // ピラミッドの反射で文字が鏡文字になるので、あらかじめ反転しておく(像は、そのまま)
   ctx.textAlign = 'left'; ctx.textBaseline = 'alphabetic';
   let lay = layoutCaption(cap.text, base, maxW);
-  while (lay.h > (pyrActive ? R * 1.2 : H * 0.34) && base > (pyrActive ? 9 : 14)) { base *= 0.9; lay = layoutCaption(cap.text, base, maxW); }
+  while (lay.h > (pyrActive ? R * 2.1 : H * 0.34) && base > (pyrActive ? 12 : 14)) { base *= 0.9; lay = layoutCaption(cap.text, base, maxW); }
   // 画面からはみ出さないように位置を調整する(板で上下反転していても、画面上の位置で判断)
   let top = pyrActive ? R * (pyrApexUp ? 1.45 : -1.45 - 0.5) : R * 2.05;   // 先端が上: 像の足もと(外側)に出す
   const m = ctx.getTransform(), d = m.d / DPR;

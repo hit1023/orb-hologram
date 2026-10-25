@@ -113,12 +113,12 @@ async function cfText(system, user, maxTokens = 220) {
 // ---- 気持ちの分析: 会話の履歴 × いまの気分 から、ルミの「この人への本音」を言葉にする ----
 //   返事を待たせないよう、返したあとに裏で走らせる。数ターンごと、または態度が変わったとき。
 const feelingBusy = new Set();
-async function analyzeFeelings(user, m) {
+async function analyzeFeelings(user, m, force = false) {
   if (feelingBusy.has(user.id)) return;
   const row = store.loadMoodRow(user.id) || {};
   const total = store.countTurns(user.id), st = moodLib.stance(m);
   const changed = row.impr_stance && row.impr_stance !== st;
-  if (total < 3 || (total - (row.impr_turns || 0) < 4 && !changed) || Date.now() - (row.impr_at || 0) < 20000) return;
+  if (force ? total < 1 : (total < 3 || (total - (row.impr_turns || 0) < 4 && !changed) || Date.now() - (row.impr_at || 0) < 20000)) return;
   feelingBusy.add(user.id);
   try {
     const turns = store.recentTurns(user.id, 12);
@@ -132,6 +132,23 @@ async function analyzeFeelings(user, m) {
     if (text) { store.saveImpression(user.id, text.replace(/^["「]|["」]$/g, '').slice(0, 200), total, st); console.log(`[feel] ${user.username} ${st} ${text.slice(0, 80)}`); }
   } finally { feelingBusy.delete(user.id); }
 }
+
+// 「俺のイメージは?」「いまどんな気持ち?」と聞かれたとき、保存しているデータから答えさせるための材料
+function feelingBlock(user, m) {
+  const row = store.loadMoodRow(user.id) || {}, st = store.turnStats(user.id), r = moodLib.round(m);
+  const topics = store.recentTurns(user.id, 4).map(t => `「${t.user_text.slice(0, 40)}」`).join('');
+  const since = st.n ? memoryAgo(st.first) : null;
+  return `\n\n【いま、相手は「ルミは自分のことをどう思っているか」を聞いている】
+いまの気持ちと、この相手への印象を、正直に、短く答える。根拠はここに書いたデータだけ(ないことは作らない)。
+- この相手への印象(好感度${r.affinity}/100): ${moodLib.affinityWord(m.affinity)}。数値はそのまま読み上げず、「けっこう好き」「正直あまり好きじゃない」のように言葉で言う
+- いまの態度: ${moodLib.STANCE_JA[moodLib.stance(m)]}
+- いまの気分: よろこび${r.joy}、いかり${r.anger}、かなしみ${r.sadness}(各100点満点)
+- ルミの本音メモ: ${row.impression || 'まだない'}
+- 付き合い: ${st.n ? `これまで${st.n}回やりとりした。はじめて話したのは${since}` : 'まだほとんど話していない。印象はまだはっきりしない、と正直に言う'}
+- 最近の話題: ${topics || 'まだない'}
+返答は2〜3文。いまの態度に合った口調で答える(嫌いなら毒づいてよい、好きなら素直に照れながら)。最後に聞き返さなくてよい。`;
+}
+const memoryAgo = (ts) => { const m = Math.floor((Date.now() - ts) / 60000); if (m < 60) return `${Math.max(1, m)}分前`; const h = Math.floor(m / 60); if (h < 24) return `${h}時間前`; const d = Math.floor(h / 24); return d < 31 ? `${d}日前` : `${Math.floor(d / 30)}か月前`; };
 
 function parseReply(raw) {
   const m = raw.match(/\{[\s\S]*\}/);
@@ -178,6 +195,9 @@ function jevQuestions() {
     rude: '暴言・侮辱・悪口・きつい言い方で攻撃している' } };
   q.topic = { type: 'choice', instructions: 'ユーザーは、どんな出来事を話しているか', criteria: {
     none: '特に出来事の話ではない', happy: 'うれしい・楽しい出来事を話している', sad: '悲しい・つらい・落ち込んだ出来事を話している' } };
+  q.intent = { type: 'choice', instructions: 'ユーザーはキャラクターに、何を求めているか', criteria: {
+    none: '特に当てはまらない(ふつうの会話・質問・頼みごと)',
+    ask_feeling: 'キャラクター自身が、ユーザーのことをどう思っているか・ユーザーの印象・評価・好き嫌い・キャラクターの今の気持ちを尋ねている(例:俺のイメージは?、私のことどう思う?、今どんな気持ち?)' } };
   return q;
 }
 let lastSpont = 0;
@@ -201,9 +221,9 @@ async function jevAct(text) {
     const r = pick('react', 0.6);
     if (r && ACTIONS.includes(r.c) && Date.now() - lastSpont > 15000 && (r.p >= 0.85 || Math.random() < 0.6)) { acts.push(r.c); spontaneous = true; lastSpont = Date.now(); }
   }
-  const mp = pick('manner', 0.5), tp = pick('topic', 0.5);
+  const mp = pick('manner', 0.5), tp = pick('topic', 0.5), ip = pick('intent', 0.6);
   const manner = mp && (mp.c !== 'rude' || mp.p >= 0.6) ? mp.c : 'neutral';
-  return { actions: acts, spontaneous, manner, topic: tp ? tp.c : 'none' };
+  return { actions: acts, spontaneous, manner, topic: tp ? tp.c : 'none', askFeeling: !!(ip && ip.c === 'ask_feeling') };
 }
 
 // ---- 1回の発話の分析(動き・話しかけ方)と、気分の更新。/api/act と /api/chat が同じ結果を共有する ----
@@ -219,6 +239,7 @@ function userTurn(user, text) {
       catch (e) { console.log(`[act] failed: ${e.message}`); }
     }
     if (!an) an = { actions: [], spontaneous: false, ...moodLib.heuristic(text) };
+    an.askFeeling = an.askFeeling || moodLib.asksFeeling(text);
     const before = moodLib.decayed(store.loadMoodRow(user.id));
     const after = moodLib.apply(before, an);
     store.saveMoodRow(user.id, after);
@@ -378,7 +399,8 @@ http.createServer(async (req, res) => {
       // 話しかけ方の分析(気分の更新)と、過去の記憶の検索(埋め込み)を並べて待つ
       const [turn, qvec] = await Promise.all([userTurn(user, text.slice(0, 300)), memory.embedQuery(text.slice(0, 300))]);
       const mems = memory.recall(user.id, qvec);
-      const system = SYSTEM + `\n\n話し相手のユーザー名は「${user.username}」。` + moodLib.guide(turn.raw, turn.refused, (store.loadMoodRow(user.id) || {}).impression) + memory.block(mems);
+      if (turn.askFeeling) await Promise.race([analyzeFeelings(user, turn.raw, true), new Promise(r => setTimeout(r, 3500))]);   // 聞かれたときは、最新の本音を作ってから答える
+      const system = SYSTEM + `\n\n話し相手のユーザー名は「${user.username}」。` + moodLib.guide(turn.raw, turn.refused, (store.loadMoodRow(user.id) || {}).impression) + memory.block(mems) + (turn.askFeeling ? feelingBlock(user, turn.raw) : '');
       const stored = store.recentTurns(user.id, 8).flatMap(t => [{ role: 'user', text: t.user_text }, { role: 'ai', text: t.reply }]);
       const hist = stored.length ? stored : history;                  // 会話履歴はサーバーに保存したものを使う(ページを開き直しても続く)
       let raw, via = 'cf';
@@ -396,7 +418,7 @@ http.createServer(async (req, res) => {
       out.mood = turn.mood; out.moodLabel = turn.moodLabel; out.stance = turn.stance;
       memory.remember(user.id, text.slice(0, 300), out.reply, out.emotion);   // 履歴に保存して、あとから思い出せるようにする
       analyzeFeelings(user, turn.raw).catch(() => {});                         // 履歴×気分から、この人への本音を分析(裏で)
-      console.log(`[chat] ${user.username} ${via} ${Date.now() - t0}ms mem=${mems.length} mood=${turn.mood.joy}/${turn.mood.anger}/${turn.mood.sadness}/♥${turn.mood.affinity} ${turn.stance} ${out.emotion} [${out.actions}]${turn.refused ? ' (ことわった)' : ''} ${out.reply}`);
+      console.log(`[chat] ${user.username} ${via} ${Date.now() - t0}ms ask=${turn.askFeeling ? 1 : 0} mem=${mems.length} mood=${turn.mood.joy}/${turn.mood.anger}/${turn.mood.sadness}/♥${turn.mood.affinity} ${turn.stance} ${out.emotion} [${out.actions}]${turn.refused ? ' (ことわった)' : ''} ${out.reply}`);
       return send(res, 200, out);
     }
     if (req.method === 'POST' && url === '/api/act') {          // 動きと話しかけ方を速く判断する(Jev)。キーがなくても、気分の更新はする

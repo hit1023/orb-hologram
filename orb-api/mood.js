@@ -92,6 +92,7 @@ function guide(m, refusing, impression) {
 }
 
 // Jevが使えないときの簡易判定
+const ASK_FEELING_RX = /((俺|おれ|私|わたし|あたし|僕|ぼく|うち|自分)(の|って|は|のこと).{0,8}(イメージ|印象|評価|どう思|どんな(人|やつ|奴|ひと)|好き|嫌い|きらい)|(イメージ|印象|評価)(は|って|を?教えて|どう|を聞かせて)|(今|いま).{0,6}(どんな)?(気持ち|気分|機嫌)|(ルミ|きみ|君|あなた|お前|おまえ).{0,6}(どう思って|どんな気持ち|何を思って|私.{0,4}好き|俺.{0,4}好き)|(俺|私|僕|ぼく|わたし)のこと.{0,6}(好き|嫌い|どう))/;
 const RX = {
   rude: /(バカ|馬鹿|アホ|ばか|あほ|うるさい|黙れ|だまれ|死ね|クソ|くそ|ブス|きもい|キモい|消えろ|使えない|役立たず|ポンコツ)/,
   thanks: /(ありがとう|ありがと|助かった|さすが|えらい|偉い|かわいい|可愛い|すごい|大好き|好きだよ|最高)/,
@@ -104,7 +105,10 @@ function heuristic(text) {
   const t = String(text || '');
   const manner = RX.rude.test(t) ? 'rude' : RX.thanks.test(t) ? 'thanks' : RX.kind.test(t) ? 'kind' : RX.commanding.test(t) ? 'commanding' : 'neutral';
   const topic = RX.sad.test(t) ? 'sad' : RX.happy.test(t) ? 'happy' : 'none';
-  return { manner, topic };
+  return { manner, topic, askFeeling: ASK_FEELING_RX.test(t) };
 }
+const asksFeeling = (text) => ASK_FEELING_RX.test(String(text || ''));
+const affinityWord = (a) => a < 15 ? '大嫌い' : a < 30 ? '嫌い' : a < 45 ? 'ちょっと苦手' : a < 60 ? 'ふつう(まだ好きでも嫌いでもない)' : a < 75 ? 'わりと好き' : a < 90 ? '好き' : '大好き';
+const STANCE_JA = { hostile: '嫌いで、腹が立っている', cold: '好きではなく、距離を置いている', tsundere: '好きだけど、いまは腹が立っている', irritated: 'いらいらしている', sulky: 'さみしくて、しょんぼりしている', devoted: '大好きで、ごきげん', normal: '落ち着いている' };
 
-module.exports = { BASE, REFUSE_ANGER, decayed, apply, round, label, stance, shouldRefuse, guide, heuristic };
+module.exports = { asksFeeling, affinityWord, STANCE_JA, BASE, REFUSE_ANGER, decayed, apply, round, label, stance, shouldRefuse, guide, heuristic };

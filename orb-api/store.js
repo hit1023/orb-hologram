@@ -153,8 +153,9 @@ function addTurn(userId, userText, reply, emotion) {
 const setTurnVec = (id, f32) => db.prepare('UPDATE turns SET vec = ? WHERE id = ?').run(Buffer.from(f32.buffer, f32.byteOffset, f32.byteLength), id);
 const recentTurns = (userId, n) => db.prepare('SELECT id, user_text, reply, created_at FROM turns WHERE user_id = ? ORDER BY id DESC LIMIT ?').all(userId, n).reverse();
 const turnsWithVec = (userId) => db.prepare('SELECT id, user_text, reply, created_at, vec FROM turns WHERE user_id = ? AND vec IS NOT NULL').all(userId);
+const turnStats = (userId) => db.prepare('SELECT COUNT(*) AS n, MIN(created_at) AS first, MAX(created_at) AS last FROM turns WHERE user_id = ?').get(userId);
 const countTurns = (userId) => db.prepare('SELECT COUNT(*) AS n FROM turns WHERE user_id = ?').get(userId).n;
 const clearTurns = (userId) => db.prepare('DELETE FROM turns WHERE user_id = ?').run(userId).changes;
 
-module.exports = { addTurn, setTurnVec, recentTurns, turnsWithVec, countTurns, clearTurns, createUser, countUsers, countAdmins, listUsers, getUser, deleteUser, setPassword, checkLogin, verifyUserPassword,
+module.exports = { turnStats, addTurn, setTurnVec, recentTurns, turnsWithVec, countTurns, clearTurns, createUser, countUsers, countAdmins, listUsers, getUser, deleteUser, setPassword, checkLogin, verifyUserPassword,
   createSession, sessionUser, deleteSession, loadMoodRow, saveMoodRow, saveImpression, resetMood, validateNewUser };

@@ -108,6 +108,7 @@ async function cfText(system, user, maxTokens = 220) {
     if (!r.ok) return null;
     const res = (await r.json()).result || {};
     const out = res.response ?? res.choices?.[0]?.message?.content;
+    if (out && typeof out === 'object') out = JSON.stringify(out);   // JSONで答えると、Cloudflareが解析済みの配列/オブジェクトで返すことがある
     return typeof out === 'string' && out.trim() ? out.trim() : null;
   } catch (_) { return null; }
 }
@@ -153,7 +154,7 @@ function feelingBlock(user, m) {
 const memoryAgo = (ts) => { const m = Math.floor((Date.now() - ts) / 60000); if (m < 60) return `${Math.max(1, m)}分前`; const h = Math.floor(m / 60); if (h < 24) return `${h}時間前`; const d = Math.floor(h / 24); return d < 31 ? `${d}日前` : `${Math.floor(d / 30)}か月前`; };
 
 // ---- 興味のあるキーワード: 会話の履歴から、その人が好きなもの・よく話すものを、LLMが数語だけ拾う(ニュース検索に使う) ----
-const interestBusy = new Set();
+const interestBusy = new Set(), lastWeatherTopic = new Map();
 async function extractInterests(user, force = false) {
   if (interestBusy.has(user.id)) return;
   const total = store.countTurns(user.id), cur = store.getInterests(user.id);
@@ -434,7 +435,9 @@ http.createServer(async (req, res) => {
 
     if (req.method === 'POST' && url === '/api/topic') {                  // ルミから話題を出す: その人の興味に合うニュースを1つ選んで、自分から話しかける
       const st = store.getSettings(); if (!st.topic_enabled) return send(res, 200, { none: true, disabled: true });
-      const t0 = Date.now(), env = st.weather_enabled ? store.getEnv(user.id) : null, useWeather = !!env && Date.now() - env.updated_at < 3 * 3600 * 1000 && Math.random() < 0.4;
+      const t0 = Date.now(), env = st.weather_enabled ? store.getEnv(user.id) : null;
+      const useWeather = !!env && Date.now() - env.updated_at < 3 * 3600 * 1000 && Date.now() - (lastWeatherTopic.get(user.id) || 0) > 3 * 3600 * 1000 && Math.random() < 0.5;   // 天気の話題は3時間に1回まで
+      if (useWeather) lastWeatherTopic.set(user.id, Date.now());
       let ints = store.getInterests(user.id);
       if (!ints.list.length) { await Promise.race([extractInterests(user, true), new Promise(r => setTimeout(r, 3500))]); ints = store.getInterests(user.id); }
       const n = useWeather ? { title: `今日の天気は${env.weather.desc}、気温${env.weather.temp}℃`, source: '天気', keyword: '天気' } : await news.pickNews(user.id, ints.list);

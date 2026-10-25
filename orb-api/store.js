@@ -191,7 +191,12 @@ function getEnv(userId) {
 const clearEnv = (userId) => db.prepare('DELETE FROM user_env WHERE user_id = ?').run(userId);
 
 // ---- 成長(経験値・連続日数) ----
-const getGrowth = (userId) => db.prepare('SELECT xp, streak, last_day, day, day_xp, turns FROM growth WHERE user_id = ?').get(userId) || { xp: 0, streak: 0, last_day: null, day: null, day_xp: 0, turns: 0 };
+function getGrowth(userId) {
+  const r = db.prepare('SELECT xp, streak, last_day, day, day_xp, turns FROM growth WHERE user_id = ?').get(userId);
+  if (r) return r;
+  const n = db.prepare('SELECT COUNT(*) AS n FROM turns WHERE user_id = ?').get(userId).n;     // 成長機能の前から話していた人は、過去の会話数から経験値を引き継ぐ(ルミの手前まで)
+  return { xp: Math.min(n * 3, 299), streak: 0, last_day: null, day: null, day_xp: 0, turns: n };
+}
 const saveGrowth = (userId, g) => db.prepare(`INSERT INTO growth (user_id, xp, streak, last_day, day, day_xp, turns) VALUES (?, ?, ?, ?, ?, ?, ?)
   ON CONFLICT(user_id) DO UPDATE SET xp = excluded.xp, streak = excluded.streak, last_day = excluded.last_day, day = excluded.day, day_xp = excluded.day_xp, turns = excluded.turns`)
   .run(userId, g.xp, g.streak, g.last_day, g.day, g.day_xp, g.turns);

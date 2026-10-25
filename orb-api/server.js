@@ -107,7 +107,7 @@ async function cfText(system, user, maxTokens = 220) {
     });
     if (!r.ok) return null;
     const res = (await r.json()).result || {};
-    const out = res.response ?? res.choices?.[0]?.message?.content;
+    let out = res.response ?? res.choices?.[0]?.message?.content;
     if (out && typeof out === 'object') out = JSON.stringify(out);   // JSONで答えると、Cloudflareが解析済みの配列/オブジェクトで返すことがある
     return typeof out === 'string' && out.trim() ? out.trim() : null;
   } catch (_) { return null; }

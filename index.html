@@ -65,6 +65,7 @@
   </select>
   <button id="pyrApex" title="ピラミッドの置き方。先端が上(スマホを下向きに置く)か、先端が下(スマホの上にピラミッドを置く)か。像が逆さまのときに押す" style="display:none">先端: 上</button>
   <button id="pyrRotBtn" title="見る人の正面にする辺を切り替える(自動→下→左→上→右)" style="display:none">正面: 自動</button>
+  <button id="pyrTxt" title="ピラミッドで文字が鏡文字になるのを直す(字幕だけ左右反転)" style="display:none">文字反転: ON</button>
   <button id="pyrMir" title="像が左右逆(文字が鏡文字)のときに押す" style="display:none">左右反転: OFF</button>
   <button id="pyrFlip" title="ピラミッドの横顔(左右)の向きを入れ替える。見ている向きが逆だったときに押す" style="display:none">向き反転</button>
   <button id="mic">マイク開始</button>
@@ -203,15 +204,17 @@ function log(extra) {
   if (extra && !/^(あなた|ルミ|認識中)/.test(extra)) setNotice(extra);
 }
 // 左上の小さな状態表示は、板に映ると邪魔なので通常モード(画面確認)のときだけ出す
-let pyrApexUp = true, pyrMir = false, pyrRot = -1;   // pyrRot: 正面にする辺(-1=自動: 縦長なら左右の辺/横長なら下の辺, 0〜3=手動)
+let pyrApexUp = true, pyrMir = false, pyrRot = -1, pyrTextMir = true;   // pyrRot: 正面にする辺(-1=自動: 縦長なら左右の辺/横長なら下の辺, 0〜3=手動)
  try { pyrApexUp = localStorage.getItem('orb.pyrApex') !== 'down'; pyrMir = localStorage.getItem('orb.pyrMir') === '1'; } catch (_) {}
 try { pyrRot = +(localStorage.getItem('orb.pyrRot') ?? -1); } catch (_) {}
-const paintPyr = () => { $('pyrRotBtn').textContent = '正面: ' + (pyrRot < 0 ? '自動' : ['下', '左', '上', '右'][pyrRot]); $('pyrApex').textContent = '先端: ' + (pyrApexUp ? '上' : '下'); $('pyrMir').textContent = '左右反転: ' + (pyrMir ? 'ON' : 'OFF'); };
+try { pyrTextMir = localStorage.getItem('orb.pyrTextMir') !== '0'; } catch (_) {}
+const paintPyr = () => { $('pyrTxt').textContent = '文字反転: ' + (pyrTextMir ? 'ON' : 'OFF'); $('pyrRotBtn').textContent = '正面: ' + (pyrRot < 0 ? '自動' : ['下', '左', '上', '右'][pyrRot]); $('pyrApex').textContent = '先端: ' + (pyrApexUp ? '上' : '下'); $('pyrMir').textContent = '左右反転: ' + (pyrMir ? 'ON' : 'OFF'); };
 $('pyrApex').onclick = () => { pyrApexUp = !pyrApexUp; try { localStorage.setItem('orb.pyrApex', pyrApexUp ? 'up' : 'down'); } catch (_) {} paintPyr(); };
 $('pyrRotBtn').onclick = () => { pyrRot = pyrRot >= 3 ? -1 : pyrRot + 1; try { localStorage.setItem('orb.pyrRot', String(pyrRot)); } catch (_) {} paintPyr(); };
+$('pyrTxt').onclick = () => { pyrTextMir = !pyrTextMir; try { localStorage.setItem('orb.pyrTextMir', pyrTextMir ? '1' : '0'); } catch (_) {} paintPyr(); };
 $('pyrMir').onclick = () => { pyrMir = !pyrMir; try { localStorage.setItem('orb.pyrMir', pyrMir ? '1' : '0'); } catch (_) {} paintPyr(); };
 paintPyr();
-function applyLogVisibility() { $('pyrApex').style.display = $('pyrMir').style.display = $('pyrRotBtn').style.display = $('mode').value === 'pyramid' ? '' : 'none'; $('log').style.display = $('mode').value === 'plain' ? '' : 'none'; $('pyrFlip').style.display = $('mode').value === 'pyramid' && $('char').value === 'mascot3d' ? '' : 'none'; }
+function applyLogVisibility() { $('pyrApex').style.display = $('pyrMir').style.display = $('pyrRotBtn').style.display = $('pyrTxt').style.display = $('mode').value === 'pyramid' ? '' : 'none'; $('log').style.display = $('mode').value === 'plain' ? '' : 'none'; $('pyrFlip').style.display = $('mode').value === 'pyramid' && $('char').value === 'mascot3d' ? '' : 'none'; }
 $('pyrFlip').onclick = () => { pyrDir = -pyrDir; try { localStorage.setItem('orb.pyrDir', String(pyrDir)); } catch (_) {} };
 $('char').addEventListener('change', () => applyLogVisibility());
 
@@ -292,6 +295,7 @@ function drawCaption(R, cap) {
   let base = pyrActive ? Math.max(11, Math.min(R * 0.2, 26)) : Math.max(18, Math.min(R * 0.30, W * 0.06));
   const maxW = pyrActive ? Math.max(R * 3.4, 120) : W * 0.88;
   ctx.save();
+  if (pyrActive && pyrTextMir) ctx.scale(-1, 1);   // ピラミッドの反射で文字が鏡文字になるので、あらかじめ反転しておく(像は、そのまま)
   ctx.textAlign = 'left'; ctx.textBaseline = 'alphabetic';
   let lay = layoutCaption(cap.text, base, maxW);
   while (lay.h > (pyrActive ? R * 1.2 : H * 0.34) && base > (pyrActive ? 9 : 14)) { base *= 0.9; lay = layoutCaption(cap.text, base, maxW); }
@@ -950,7 +954,7 @@ function ptDraw(front) {                              // キャラの空間(R単
       case 'drop': ctx.beginPath(); ctx.ellipse(p.x, p.y, sz * 0.62, sz * 1.15, 0, 0, 6.283); ctx.fill(); break;
       case 'confetti': ctx.save(); ctx.translate(p.x, p.y); ctx.rotate(p.rot); ctx.scale(1, Math.abs(Math.cos(p.age * 5 + p.rot)) * 0.8 + 0.2); ctx.fillRect(-sz / 2, -sz / 4, sz, sz / 2); ctx.restore(); break;
       case 'heart': { ctx.save(); ctx.translate(p.x, p.y); const k = sz * 3.2; ctx.scale(k, k); ctx.beginPath(); ctx.moveTo(0, 0.3); ctx.bezierCurveTo(-0.55, -0.05, -0.3, -0.5, 0, -0.22); ctx.bezierCurveTo(0.3, -0.5, 0.55, -0.05, 0, 0.3); ctx.fill(); ctx.restore(); break; }
-      case 'text': ctx.save(); ctx.translate(p.x, p.y); ctx.rotate(p.rot); ctx.scale(sz / 60, sz / 60); ctx.font = 'bold 60px system-ui, sans-serif'; ctx.fillText(p.ch, 0, 0); ctx.restore(); break;
+      case 'text': ctx.save(); ctx.translate(p.x, p.y); ctx.rotate(p.rot); ctx.scale(sz / 60 * (pyrActive && pyrTextMir ? -1 : 1), sz / 60); ctx.font = 'bold 60px system-ui, sans-serif'; ctx.fillText(p.ch, 0, 0); ctx.restore(); break;
     }
   }
   ctx.restore();

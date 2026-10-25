@@ -92,12 +92,22 @@
     <button type="submit" class="primary">ログイン</button>
   </form>
 </div>
+<div id="pwModal" class="overlay" style="z-index:40" hidden>
+  <form id="pwForm" class="card">
+    <h1 id="pwTitle"></h1>
+    <div id="pwFields"></div>
+    <label style="font-size:13px;color:#9bd"><input id="pwShow" type="checkbox"> パスワードを表示</label>
+    <div id="pwErr" class="err"></div>
+    <div class="row" style="justify-content:flex-end"><button type="button" id="pwCancel" class="sm">キャンセル</button><button type="submit" class="primary sm">OK</button></div>
+  </form>
+</div>
 <div id="admin" class="overlay" hidden>
   <div class="card wide">
     <div class="row" style="justify-content:space-between"><h1>ユーザー管理</h1><button id="admClose" class="sm">閉じる</button></div>
     <form id="addForm" class="row">
       <input id="adUser" placeholder="ユーザー名(英数字 3〜32)" autocapitalize="none" autocomplete="off" spellcheck="false" required>
-      <input id="adPass" type="text" placeholder="パスワード(8文字以上)" autocomplete="off" autocapitalize="none" spellcheck="false" required>
+      <input id="adPass" type="password" placeholder="パスワード(8文字以上)" autocomplete="new-password" autocapitalize="none" spellcheck="false" required>
+      <button type="button" id="adShow" class="sm">表示</button>
       <button type="button" id="adGen" class="sm">自動生成</button>
       <select id="adRole"><option value="user">一般</option><option value="admin">管理者</option></select>
       <button type="submit" class="primary sm">追加</button>
@@ -1281,10 +1291,22 @@ $('forgetBtn').onclick = async () => {
   const r = await jsend('POST', '/api/memory/clear'); const j = await r.json();
   alert(r.ok ? `${j.deleted}件の会話を消しました` : (j.error || '消せませんでした'));
 };
+// パスワードの入力画面(伏せ字。prompt() は平文で見えてしまうので使わない)
+function askPasswords(title, labels) {
+  return new Promise((resolve) => {
+    const box = $('pwFields'); box.textContent = ''; $('pwShow').checked = false; $('pwErr').textContent = '';
+    const inputs = labels.map((l) => { const i = document.createElement('input'); i.type = 'password'; i.placeholder = l; i.autocomplete = 'new-password'; i.required = true; i.style.cssText = 'width:100%;margin-bottom:8px'; box.appendChild(i); return i; });
+    $('pwShow').onchange = () => inputs.forEach((i) => { i.type = $('pwShow').checked ? 'text' : 'password'; });
+    $('pwTitle').textContent = title; $('pwModal').hidden = false; setTimeout(() => inputs[0].focus(), 30);
+    const done = (v) => { $('pwModal').hidden = true; $('pwForm').onsubmit = null; $('pwCancel').onclick = null; resolve(v); };
+    $('pwForm').onsubmit = (e) => { e.preventDefault(); done(inputs.map((i) => i.value)); };
+    $('pwCancel').onclick = () => done(null);
+  });
+}
 $('logoutBtn').onclick = async () => { try { await jsend('POST', '/api/auth/logout'); } catch (_) {} showLogin(); };
 $('pwBtn').onclick = async () => {
-  const current = prompt('いまのパスワード'); if (!current) return;
-  const next = prompt('新しいパスワード(8文字以上)'); if (!next) return;
+  const v = await askPasswords('パスワード変更', ['いまのパスワード', '新しいパスワード(8文字以上)']); if (!v) return;
+  const [current, next] = v;
   const r = await jsend('POST', '/api/auth/password', { current, next }); const j = await r.json();
   alert(r.ok ? 'パスワードを変えました' : (j.error || '変えられませんでした'));
 };
@@ -1310,7 +1332,7 @@ async function loadUsers() {
     const acts = document.createElement('div'); acts.className = 'acts';
     const mk = (label, cls, fn) => { const b = document.createElement('button'); b.className = 'sm ' + cls; b.textContent = label; b.onclick = fn; acts.appendChild(b); };
     mk('PW再設定', '', async () => {
-      const pw = prompt(`${u.username} の新しいパスワード(8文字以上)`); if (!pw) return;
+      const v = await askPasswords(`${u.username} の新しいパスワード`, ['新しいパスワード(8文字以上)']); if (!v) return; const pw = v[0];
       const rr = await jsend('POST', `/api/admin/users/${u.id}/password`, { password: pw }); const jj = await rr.json();
       $('adMsg').className = 'err' + (rr.ok ? ' ok' : ''); $('adMsg').textContent = rr.ok ? `${u.username} のパスワードを変えました` : jj.error;
     });
@@ -1331,9 +1353,11 @@ async function loadUsers() {
 }
 $('adminBtn').onclick = () => { $('admin').hidden = false; $('adMsg').textContent = ''; loadUsers(); };
 $('admClose').onclick = () => { $('admin').hidden = true; };
+$('adShow').onclick = () => { const p = $('adPass'); p.type = p.type === 'password' ? 'text' : 'password'; $('adShow').textContent = p.type === 'password' ? '表示' : '隠す'; };
 $('adGen').onclick = () => {
   const cs = 'abcdefghijkmnpqrstuvwxyzABCDEFGHJKLMNPQRSTUVWXYZ23456789', a = new Uint32Array(14); crypto.getRandomValues(a);
   $('adPass').value = Array.from(a, v => cs[v % cs.length]).join('');
+  $('adPass').type = 'text'; $('adShow').textContent = '隠す';          // 自動生成したものは、控えられるよう表示する
 };
 $('addForm').addEventListener('submit', async (e) => {
   e.preventDefault();
@@ -1342,7 +1366,7 @@ $('addForm').addEventListener('submit', async (e) => {
   $('adMsg').className = 'err' + (r.ok ? ' ok' : '');
   if (!r.ok) { $('adMsg').textContent = j.error || '追加できませんでした'; return; }
   $('adMsg').textContent = `${username} を追加しました。パスワードを本人に伝えてください: ${password}`;
-  $('adUser').value = ''; $('adPass').value = ''; loadUsers();
+  $('adUser').value = ''; $('adPass').value = ''; $('adPass').type = 'password'; $('adShow').textContent = '表示'; loadUsers();
 });
 applyLogVisibility(); $('mode').addEventListener('change', applyLogVisibility); $('mode').addEventListener('input', applyLogVisibility);
 log();

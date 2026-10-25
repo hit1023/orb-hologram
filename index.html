@@ -1455,11 +1455,13 @@ async function refreshJobs() {
     const b = $('jobBadge'), j = jobsInfo;
     if (j.pending) { b.style.display = ''; b.textContent = `🔎 調べ中 ${j.pending}件`; b.classList.add('on'); }
     else if (j.ready) { b.style.display = ''; b.textContent = `🔎 報告待ち ${j.ready}件`; b.classList.add('on'); }
-    else if (j.jobs.length) { b.style.display = ''; b.textContent = '🔎 調べ物'; b.classList.remove('on'); }
-    else b.style.display = 'none';
+    else { b.style.display = ''; b.textContent = '🔎 調べ物'; b.classList.remove('on'); }   // いつも見える(結果はここに置いておく)
+    const un = j.jobs.filter(x => x.status === 'done' && !seenJobs().has(x.id)).length; if (un) { b.textContent += ` 📬${un}`; b.classList.add('on'); }
     if (!$('jobs').hidden) renderJobs();
   } catch (_) {}
 }
+const seenJobs = () => { try { return new Set(JSON.parse(localStorage.getItem('seenJobs') || '[]')); } catch (_) { return new Set(); } };
+function markSeen() { try { const s = seenJobs(); jobsInfo.jobs.forEach(j => { if (j.status === 'done') s.add(j.id); }); localStorage.setItem('seenJobs', JSON.stringify([...s].slice(-200))); } catch (_) {} }
 function renderJobs() {
   const box = $('jobsList'); box.textContent = '';
   if (!jobsInfo.jobs.length) { box.textContent = 'まだありません。「〜を調べておいて」と話しかけてみてください。'; return; }
@@ -1472,12 +1474,17 @@ function renderJobs() {
     const live = j.status === 'pending' || j.status === 'running';
     sub.textContent = live ? `${fmtSec((jobsInfo.now + (performance.now() - jobsInfo.t) - j.created_at) / 1000)} 経過` : '';
     row.append(nm, document.createElement('div'), sub);
-    if (j.summary) { const sm = document.createElement('div'); sm.className = 'sub'; sm.style.color = '#9bd'; sm.textContent = j.summary; row.appendChild(sm); }
+    if (j.status === 'done') {
+      const dt = document.createElement('details'); dt.open = !seenJobs().has(j.id); const sm = document.createElement('summary'); sm.className = 'sub'; sm.style.cssText = 'color:#9bd;cursor:pointer'; sm.textContent = j.summary || '結果を見る'; dt.appendChild(sm);
+      const body = document.createElement('div'); body.className = 'sub'; body.style.cssText = 'white-space:pre-wrap;margin:6px 0;color:#cde;line-height:1.6'; body.textContent = j.detail || j.summary; dt.appendChild(body);
+      for (const u of (j.sources || []).slice(0, 5)) { if (!/^https?:\/\//.test(u)) continue; const a = document.createElement('a'); a.href = u; a.target = '_blank'; a.rel = 'noopener noreferrer'; a.textContent = u.replace(/^https?:\/\//, '').slice(0, 60); a.style.cssText = 'display:block;font-size:11px;color:#6cf;word-break:break-all'; dt.appendChild(a); }
+      row.appendChild(dt);
+    }
     box.appendChild(row);
   }
 }
 $('jobBadge').onclick = () => { $('jobs').hidden = false; refreshJobs().then(renderJobs); renderJobs(); };
-$('jobsClose').onclick = () => { $('jobs').hidden = true; };
+$('jobsClose').onclick = () => { $('jobs').hidden = true; markSeen(); refreshJobs(); };
 $('jobsClear').onclick = async () => { await jsend('POST', '/api/jobs/clear'); refreshJobs(); };
 setInterval(() => { if (!me) return; const every = jobsInfo.pending ? 8000 : 90000; if (performance.now() - jobsAt > every) refreshJobs(); if (!$('jobs').hidden) renderJobs(); }, 1000);
 
@@ -1503,7 +1510,7 @@ setInterval(async () => {
     const r = await jsend('POST', '/api/report', {}); const j = await r.json();
     if (r.ok && j.reply && !j.none && topicQuiet()) {
       setMood(j.mood); if (j.growth) setGrowth(j.growth); chatHistory.push({ role: 'ai', text: j.reply }); lastAct = performance.now();
-      log('🔎 調べた結果: ' + j.news.title); speak(j.reply, j.emotion, []); reportPending = true;      // ほかにも終わったものがあるかもしれない
+      log('🔎 調べ終わった: ' + j.news.title); speak(j.reply, j.emotion, []); reportPending = true;      // ほかにも終わったものがあるかもしれない
     }
   } catch (_) {} finally { reportBusy = false; }
 }, 3000);

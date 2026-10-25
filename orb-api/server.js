@@ -501,18 +501,15 @@ http.createServer(async (req, res) => {
     if (req.method === 'GET' && url === '/api/jobs') {                      // 調べ物の状況(調べ中・完了・報告済み)
       const u = currentUser(req); if (!u) return send(res, 401, { error: 'login required' });
       const rows = store.listJobs(u.id, 10).map(j => ({ id: j.id, query: j.query, status: j.status, delivered: !!j.delivered, created_at: j.created_at, done_at: j.done_at,
-        summary: j.status === 'done' ? plainSummary(j.result) : '', sources: (() => { try { return JSON.parse(j.sources || '[]'); } catch (_) { return []; } })() }));
+        summary: j.status === 'done' ? plainSummary(j.result) : '', detail: j.status === 'done' ? String(j.result || '').slice(0, 3000) : '', sources: (() => { try { return JSON.parse(j.sources || '[]'); } catch (_) { return []; } })() }));
       return send(res, 200, { jobs: rows, pending: rows.filter(j => j.status === 'pending' || j.status === 'running').length, ready: rows.filter(j => j.status === 'done' && !j.delivered).length, now: Date.now() });
     }
     if (req.method === 'POST' && url === '/api/report') {                   // 調べ終わったことを、ルミの口調で報告する
       const st = store.getSettings(); if (!st.research_enabled) return send(res, 200, { none: true });
       const job = store.takeDoneJob(user.id); if (!job) return send(res, 200, { none: true, pending: store.countJobs(user.id) });
       const m = moodLib.decayed(store.loadMoodRow(user.id));
-      const system = SYSTEM + `\n\n話し相手のユーザー名は「${user.username}」。` + moodLib.guide(m, false, (store.loadMoodRow(user.id) || {}).impression) + growth.note(growth.view(user.id).stage, growth.view(user.id).kind);
-      const prompt = `(相手はいま話しかけていない。さっき「調べておくね」と約束したことを、調べ終わったので、ルミのほうから報告する。)\n調べたこと: ${job.query}\n調査結果:\n${job.result}\n` +
-        'この調査結果だけを根拠に、ルミの口調で、1〜2文・80文字以内の短さで報告する。いちばん大事な1点だけを言う。結果にないことは言わない。確認できなかったら、そう一言で言う。URLや記号は言わない。actionsは[]。';
-      let out; try { out = parseReply(await runCloudflare(prompt, [], system)); } catch (_) { out = { reply: `さっきの調べ物、わかったよ。${job.result.replace(/\s+/g, ' ').slice(0, 90)}`, emotion: 'happy' }; }
-      out.actions = []; delete out.research; out.reply = shorten(out.reply, 2, 110);
+      const LINES = ['調べたよ！「調べ物」ボタンを見てね。', 'さっきの、調べ終わったよ。「調べ物」ボタンに入れておいたね。', 'わかったよ！くわしくは「調べ物」ボタンを見てね。'];   // 結果は読み上げず、ボタン(メールボックス)に置いておく
+      const out = { reply: LINES[Math.floor(Math.random() * LINES.length)], emotion: 'happy', actions: [] };
       store.markJobDelivered(job.id);
       store.addTurn(user.id, `（ルミから報告）${job.query}`.slice(0, 200), out.reply, out.emotion);
       let sources = []; try { sources = JSON.parse(job.sources || '[]'); } catch (_) {}

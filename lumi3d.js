@@ -210,9 +210,9 @@ export function createLumi3D({ width = 560, height = 720 } = {}) {
       case 'surprised': return [0, s * 2.0];
       case 'shy': return [-2.2, -s * 0.25];
       case 'thinking': return s > 0 ? [-2.3, -s * 0.2] : [0, s * 0.15];
-      case 'angry': return [0, s * 0.55];
-      case 'sad': return [0, s * 0.05];
-      default: return talk ? [-0.5, s * (0.5 + talk * 0.2) + Math.sin(t * 6 + s) * 0.08] : [0, s * (0.16 + Math.sin(t * 1.7) * 0.03)];
+      case 'angry': return [0, s * 0.6];
+      case 'sad': return [0, s * 0.34];
+      default: return talk ? [-0.5, s * (0.55 + talk * 0.2) + Math.sin(t * 6 + s) * 0.08] : [0, s * (0.4 + Math.sin(t * 1.7) * 0.03)];
     }
   };
   // 電柱(怖がって隠れるときに、横からにゅっと出てくる)

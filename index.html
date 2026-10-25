@@ -66,6 +66,7 @@
   <button id="pyrApex" title="ピラミッドの置き方。先端が上(スマホを下向きに置く)か、先端が下(スマホの上にピラミッドを置く)か。像が逆さまのときに押す" style="display:none">先端: 上</button>
   <button id="pyrRotBtn" title="見る人の正面にする辺を切り替える(自動→下→左→上→右)" style="display:none">正面: 自動</button>
   <button id="pyrTxt" title="ピラミッドで文字が鏡文字になるのを直す(字幕だけ左右反転)" style="display:none">文字反転: ON</button>
+  <button id="pyrCapBtn" title="押すたびに、ピラミッドの字幕が大きくなる(最大まで行くと小さく戻る)" style="display:none">字幕: 180%</button>
   <button id="pyrMir" title="像が左右逆(文字が鏡文字)のときに押す" style="display:none">左右反転: OFF</button>
   <button id="pyrFlip" title="ピラミッドの横顔(左右)の向きを入れ替える。見ている向きが逆だったときに押す" style="display:none">向き反転</button>
   <button id="mic">マイク開始</button>
@@ -204,17 +205,19 @@ function log(extra) {
   if (extra && !/^(あなた|ルミ|認識中)/.test(extra)) setNotice(extra);
 }
 // 左上の小さな状態表示は、板に映ると邪魔なので通常モード(画面確認)のときだけ出す
-let pyrApexUp = true, pyrMir = false, pyrRot = -1, pyrTextMir = true;   // pyrRot: 正面にする辺(-1=自動: 縦長なら左右の辺/横長なら下の辺, 0〜3=手動)
+let pyrApexUp = true, pyrMir = false, pyrRot = -1, pyrTextMir = true, pyrCap = 1.8;   // pyrCap: ピラミッドの字幕の大きさ(倍率)   // pyrRot: 正面にする辺(-1=自動: 縦長なら左右の辺/横長なら下の辺, 0〜3=手動)
  try { pyrApexUp = localStorage.getItem('orb.pyrApex') !== 'down'; pyrMir = localStorage.getItem('orb.pyrMir') === '1'; } catch (_) {}
 try { pyrRot = +(localStorage.getItem('orb.pyrRot') ?? -1); } catch (_) {}
 try { pyrTextMir = localStorage.getItem('orb.pyrTextMir') !== '0'; } catch (_) {}
-const paintPyr = () => { $('pyrTxt').textContent = '文字反転: ' + (pyrTextMir ? 'ON' : 'OFF'); $('pyrRotBtn').textContent = '正面: ' + (pyrRot < 0 ? '自動' : ['下', '左', '上', '右'][pyrRot]); $('pyrApex').textContent = '先端: ' + (pyrApexUp ? '上' : '下'); $('pyrMir').textContent = '左右反転: ' + (pyrMir ? 'ON' : 'OFF'); };
+try { pyrCap = +(localStorage.getItem('orb.pyrCap') || 1.8); } catch (_) {}
+const paintPyr = () => { $('pyrCapBtn').textContent = '字幕: ' + Math.round(pyrCap * 100) + '%'; $('pyrTxt').textContent = '文字反転: ' + (pyrTextMir ? 'ON' : 'OFF'); $('pyrRotBtn').textContent = '正面: ' + (pyrRot < 0 ? '自動' : ['下', '左', '上', '右'][pyrRot]); $('pyrApex').textContent = '先端: ' + (pyrApexUp ? '上' : '下'); $('pyrMir').textContent = '左右反転: ' + (pyrMir ? 'ON' : 'OFF'); };
 $('pyrApex').onclick = () => { pyrApexUp = !pyrApexUp; try { localStorage.setItem('orb.pyrApex', pyrApexUp ? 'up' : 'down'); } catch (_) {} paintPyr(); };
 $('pyrRotBtn').onclick = () => { pyrRot = pyrRot >= 3 ? -1 : pyrRot + 1; try { localStorage.setItem('orb.pyrRot', String(pyrRot)); } catch (_) {} paintPyr(); };
 $('pyrTxt').onclick = () => { pyrTextMir = !pyrTextMir; try { localStorage.setItem('orb.pyrTextMir', pyrTextMir ? '1' : '0'); } catch (_) {} paintPyr(); };
+$('pyrCapBtn').onclick = () => { pyrCap = pyrCap >= 4 ? 1 : Math.min(4, +(pyrCap * 1.25).toFixed(2)); try { localStorage.setItem('orb.pyrCap', String(pyrCap)); } catch (_) {} paintPyr(); notice.text = '字幕の大きさ ' + Math.round(pyrCap * 100) + '%'; notice.at = performance.now(); };
 $('pyrMir').onclick = () => { pyrMir = !pyrMir; try { localStorage.setItem('orb.pyrMir', pyrMir ? '1' : '0'); } catch (_) {} paintPyr(); };
 paintPyr();
-function applyLogVisibility() { $('pyrApex').style.display = $('pyrMir').style.display = $('pyrRotBtn').style.display = $('pyrTxt').style.display = $('mode').value === 'pyramid' ? '' : 'none'; $('log').style.display = $('mode').value === 'plain' ? '' : 'none'; $('pyrFlip').style.display = $('mode').value === 'pyramid' && $('char').value === 'mascot3d' ? '' : 'none'; }
+function applyLogVisibility() { $('pyrApex').style.display = $('pyrMir').style.display = $('pyrRotBtn').style.display = $('pyrTxt').style.display = $('pyrCapBtn').style.display = $('mode').value === 'pyramid' ? '' : 'none'; $('log').style.display = $('mode').value === 'plain' ? '' : 'none'; $('pyrFlip').style.display = $('mode').value === 'pyramid' && $('char').value === 'mascot3d' ? '' : 'none'; }
 $('pyrFlip').onclick = () => { pyrDir = -pyrDir; try { localStorage.setItem('orb.pyrDir', String(pyrDir)); } catch (_) {} };
 $('char').addEventListener('change', () => applyLogVisibility());
 
@@ -292,13 +295,13 @@ function layoutCaption(text, base, maxW) {
 
 let pyrActive = false;   // ピラミッド表示中は、4面それぞれに小さく・面の幅に収めて字幕を出す(全画面幅で描くと、4面が重なってめちゃくちゃになる)
 function drawCaption(R, cap) {
-  let base = pyrActive ? Math.max(18, Math.min(R * 0.42, 60)) : Math.max(18, Math.min(R * 0.30, W * 0.06));
-  const maxW = pyrActive ? Math.max(R * 4.6, 180) : W * 0.88;
+  let base = pyrActive ? Math.max(22, Math.min(R * 0.42 * pyrCap, 130)) : Math.max(18, Math.min(R * 0.30, W * 0.06));
+  const maxW = pyrActive ? Math.max(R * 4.6 * Math.sqrt(pyrCap), 180) : W * 0.88;
   ctx.save();
   if (pyrActive && pyrTextMir) ctx.scale(-1, 1);   // ピラミッドの反射で文字が鏡文字になるので、あらかじめ反転しておく(像は、そのまま)
   ctx.textAlign = 'left'; ctx.textBaseline = 'alphabetic';
   let lay = layoutCaption(cap.text, base, maxW);
-  while (lay.h > (pyrActive ? R * 2.1 : H * 0.34) && base > (pyrActive ? 12 : 14)) { base *= 0.9; lay = layoutCaption(cap.text, base, maxW); }
+  while (lay.h > (pyrActive ? R * 2.1 * pyrCap : H * 0.34) && base > (pyrActive ? 12 : 14)) { base *= 0.9; lay = layoutCaption(cap.text, base, maxW); }
   // 画面からはみ出さないように位置を調整する(板で上下反転していても、画面上の位置で判断)
   let top = pyrActive ? R * (pyrApexUp ? 1.45 : -1.45 - 0.5) : R * 2.05;   // 先端が上: 像の足もと(外側)に出す
   const m = ctx.getTransform(), d = m.d / DPR;

@@ -1339,6 +1339,23 @@ function stopSpeaking() {
   level = 0; clearTimeout(emotionTimer); emotion = baseEmo();           // 動きは止めない(自分の声に反応して動きが消えるのを防ぐ)
   if (replyCap) replyCap.endAt = performance.now();
 }
+// 読み上げ用に文ごとへ分ける(ルーター app/splitter.py と同じ考え方): 。！？改行で区切り、短い断片は次へくっつける
+function splitSentences(text, minLen = 8, maxLen = 60) {
+  const t = String(text || '').trim(); if (!t) return [];
+  const parts = []; let buf = '';
+  for (const ch of t) { buf += ch; if ('。！？!?\n'.includes(ch)) { if (buf.trim()) parts.push(buf.trim()); buf = ''; } }
+  if (buf.trim()) parts.push(buf.trim());
+  const exp = [];
+  for (const p of parts) {
+    if (p.length <= maxLen) { exp.push(p); continue; }
+    let cur = ''; for (const ch of p) { cur += ch; if ('、，,'.includes(ch) && cur.length >= minLen) { exp.push(cur); cur = ''; } }
+    if (cur) exp.push(cur);
+  }
+  const out = []; let carry = '';
+  for (const p of exp) { const c = carry + p; if (c.length < minLen) { carry = c; continue; } out.push(c); carry = ''; }
+  if (carry) { if (out.length) out[out.length - 1] += carry; else out.push(carry); }
+  return out;
+}
 async function speak(text, emo, actions) {
   const my = turn; try { emojiBurst(lastUserText + ' ' + text); } catch (_) {}
   emotion = EMO[emo] ? emo : 'neutral';
@@ -1350,22 +1367,40 @@ async function speak(text, emo, actions) {
     if (micOn) { resetStt(); } else setState('idle');
   };
   try {
-    const r = await fetch(CONFIG.ttsEndpoint, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ text, emotion }) });
-    if (!r.ok) throw new Error('tts ' + r.status);
-    const buf = await ensureAudio().decodeAudioData(await r.arrayBuffer());
-    if (my !== turn) return;                         // 待っている間に割り込まれた
-    const src = actx.createBufferSource(); src.buffer = buf;
-    const an = actx.createAnalyser(); an.fftSize = 512; const tb = new Uint8Array(an.fftSize);
-    src.connect(an); an.connect(actx.destination);
-    const timer = speakTimer = setInterval(() => {
-      an.getByteTimeDomainData(tb); let s = 0; for (const v of tb) { const d = (v - 128) / 128; s += d * d; }
-      outRms = Math.sqrt(s / tb.length); level = Math.min(1, outRms * 4);
-    }, 40);
-    playing = src;
-    replyCap.dur = buf.duration * 900; replyCap.at = performance.now(); replyCap.started = true; if (!actDecided && (actions || []).length && (actions || []).join(',') !== fastPlayed) playActions(actions); fastPlayed = '';
-    src.onended = () => { clearInterval(timer); done(); };
-    src.start();
+    // 文ごとに分けて、先頭の文ができ次第しゃべり始める(CPU合成は長文だと数秒かかるため)。
+    // 合成は1文ずつ順番に依頼する(同じ台で詰まらせない)。再生は前の文が終わりしだい次の文へつなぐ。
+    const parts = splitSentences(text);
+    let chain = Promise.resolve();
+    const jobs = parts.map(t => chain = chain.then(async () => {
+      if (my !== turn) throw new Error('interrupted');
+      const r = await fetch(CONFIG.ttsEndpoint, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ text: t, emotion }) });
+      if (!r.ok) throw new Error('tts ' + r.status);
+      return ensureAudio().decodeAudioData(await r.arrayBuffer());
+    }));
+    jobs.forEach(j => j.catch(() => {}));            // 未処理の拒否を出さない(結果は下のループで受ける)
+    const an = (ensureAudio(), actx.createAnalyser()); an.fftSize = 512; const tb = new Uint8Array(an.fftSize);
+    an.connect(actx.destination);
+    let timer = null;
+    for (let i = 0; i < jobs.length; i++) {
+      let buf;
+      try { buf = await jobs[i]; }
+      catch (e) { if (i === 0) throw e; break; }      // 2文目以降の失敗は、そこで読み上げを終える
+      if (my !== turn) return;                       // 待っている間に割り込まれた
+      const src = actx.createBufferSource(); src.buffer = buf; src.connect(an);
+      if (i === 0) {
+        timer = speakTimer = setInterval(() => {
+          an.getByteTimeDomainData(tb); let sum = 0; for (const v of tb) { const d = (v - 128) / 128; sum += d * d; }
+          outRms = Math.sqrt(sum / tb.length); level = Math.min(1, outRms * 4);
+        }, 40);
+        replyCap.dur = buf.duration * 900; replyCap.at = performance.now(); replyCap.started = true; if (!actDecided && (actions || []).length && (actions || []).join(',') !== fastPlayed) playActions(actions); fastPlayed = '';
+      } else replyCap.dur += buf.duration * 900;
+      playing = src;
+      await new Promise(res => { src.onended = res; src.start(); });
+      if (my !== turn) return;
+    }
+    clearInterval(timer); done();
   } catch (e) {                                   // TTSが使えないときはブラウザの声で代用
+    if (my !== turn) return;                      // 割り込みで止めただけなら代用の声は出さない
     log('ルミ: ' + text + '\n(ブラウザの声で再生: ' + e.message + ')');
     const u = new SpeechSynthesisUtterance(text); u.lang = CONFIG.lang;
     replyCap.dur = text.length * 170; replyCap.at = performance.now(); replyCap.started = true; if (!actDecided && (actions || []).length && (actions || []).join(',') !== fastPlayed) playActions(actions); fastPlayed = '';

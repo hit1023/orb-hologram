@@ -109,6 +109,10 @@
 - 音声認識は、既存の `hit-whisper-stt` の WebSocket（16kHz PCM）へ nginx 経由でつなぎます。
 - マイクは HTTPS が必要なので、`https://holo.s-quad.com/` で開きます。
 
+### 声は文ごとに分けて、先頭から再生
+
+CPU 版の声は長い文だと数秒かかるので、返事を文ごとに分けて `/api/tts` を呼び、最初の文ができしだい再生します（体感の待ち時間は最初の 1 文ぶん）。詳しくは [docs/TTS_STREAMING.md](docs/TTS_STREAMING.md)。
+
 ### 設定（`.env`）
 
 `.env` は git に入れません。h-1 にだけ置きます。
@@ -322,6 +326,7 @@ docker compose up -d
 | `docs/architecture.svg` / `.png` | アーキテクチャ図 |
 | `docs/lumi.png` | README の画像（ルミ） |
 | `HANDOFF.md` | 開発の引き継ぎメモ（設計・TODO・ハマりどころ） |
+| `docs/TTS_STREAMING.md` | 声を文ごとに分けて先頭から再生する仕組みの引き継ぎ（ルーターの `/speak_stream` を含む） |
 | `docs/hologram-deck.pptx` | 製作の紹介スライド（集大成版・20枚。デモ動画リンク・Jev と Zenoh の深掘り入り） |
 | `ASSET-LICENSE.txt` | 素材の出典とライセンス |
 | `dancer-concept.png` ほか | ダンスキャラ・旧 3D・動画・スプライト素材 |

@@ -479,6 +479,13 @@ http.createServer(async (req, res) => {
       const me = currentUser(req);
       if (!me) return send(res, 401, { error: 'login required' });
       if (me.role !== 'admin') return send(res, 403, { error: '管理者だけが使えます' });
+      if (req.method === 'GET' && url === '/api/admin/tts/speakers') {   // CPU版(ルーター)で使える声の一覧。設定画面のセレクト用
+        try {
+          const r = await fetch(`${ROUTER}/speakers`, { signal: AbortSignal.timeout(5000) }); if (!r.ok) throw new Error(`status ${r.status}`);
+          const list = (await r.json()).flatMap(sp => (sp.styles || []).map(st => ({ id: st.id, name: sp.name, style: st.name })));
+          return send(res, 200, { speakers: list });
+        } catch (e) { return send(res, 200, { speakers: [], error: e.message }); }
+      }
       if (req.method === 'GET' && url === '/api/admin/engines') return send(res, 200, { chat: { primary: CF_ACCOUNT && CF_TOKEN ? `Cloudflare Workers AI (${CF_MODEL.split('/').pop()})` : 'Claude CLI', fallback: 'Claude CLI (' + MODEL + ')', last: ENG.chat }, tts: { primary: ttsConf().primary === 'cloud' ? 'Aivis Cloud' : 'Aivis CPU版(h-2)', fallback: ttsConf().primary === 'cloud' ? 'Aivis CPU版(h-2)' : 'Aivis Cloud', last: ENG.tts }, jev: !!JEV_KEY, research: 'Claude CLI (' + MODEL + ', Web検索のみ)', zenoh: bus.zenohEnabled() });
       if (req.method === 'GET' && url === '/api/admin/settings') return send(res, 200, { settings: store.getSettings(), ttsDefaults: { primary: TTS_PRIMARY, cpuSpeaker: SPEAKER_ID, cloudModel: CLOUD_MODEL, cloudStyle: CLOUD_STYLE, timeoutMs: TTS_TIMEOUT_MS, cloudKey: !!AIVIS_KEY } });
       if (req.method === 'POST' && url === '/api/admin/settings') { const b = await readJson(req); console.log(`[admin] ${me.username} が設定を変更 ${JSON.stringify(b)}`); return send(res, 200, { settings: store.setSettings(b) }); }

@@ -142,7 +142,7 @@
       <label>怒りやすさ <input id="sGain" type="number" min="50" max="300" step="10" style="width:84px"> %(100=ふつう、大きいほど、すぐ怒る)</label>
       <label>パーティクル量 <select id="sPart"><option value="1">少</option><option value="2">ふつう</option><option value="3">多</option></select></label>
       <label>声(Aivis)の主 <select id="sTtsPrimary"><option value="0">既定(.env)</option><option value="1">Aivis Cloud</option><option value="2">CPU版(h-2)</option></select></label>
-      <label>声ID(CPU版・ルーター経由) <input id="sTtsCpu" type="number" min="0" style="width:9em"></label>
+      <label>声(CPU版・ルーター経由) <select id="sTtsCpu" style="max-width:15em"></select></label>
       <label>Cloud モデルUUID <input id="sTtsModel" type="text" style="width:19em" spellcheck="false"></label>
       <label>Cloud スタイル番号 <input id="sTtsStyle" type="number" min="0" max="31" style="width:5em"></label>
       <label>声のタイムアウト(ms) <input id="sTtsTmo" type="number" min="0" max="60000" step="500" style="width:7em"></label>
@@ -1706,13 +1706,23 @@ function applySettings(st) {
   PT_MAX = [0, 220, 560, 900][S.particle_level] || 560; PT_RATE = [0, 0.5, 1, 1.7][S.particle_level] || 1;
   if (!S.weather_enabled) { $('wx').textContent = ''; $('geoBtn').style.display = 'none'; } else $('geoBtn').style.display = '';
 }
+// CPU版の声のセレクト。ルーターの /speakers から一覧を取り、保存済みの声を選んだ状態にする(0=既定=.envの値)
+async function fillCpuVoices(cur, def) {
+  const sel = $('sTtsCpu'); sel.innerHTML = '';
+  const add = (v, t) => { const o = document.createElement('option'); o.value = String(v); o.textContent = t; sel.appendChild(o); };
+  add(0, '既定' + (def ? ` (ID ${def})` : ''));
+  let list = []; try { const r = await jsend('GET', '/api/admin/tts/speakers'); if (r.ok) list = (await r.json()).speakers || []; } catch (_) {}
+  for (const v of list) add(v.id, `${v.name} — ${v.style}${v.id === def ? ' (既定)' : ''}`);
+  if (cur && !list.some(v => v.id === cur)) add(cur, `ID ${cur}${list.length ? ' (一覧にない)' : ' (一覧を取得できません)'}`);
+  sel.value = String(cur || 0);
+}
 async function loadSettingsForm() {
   const r = await jsend('GET', '/api/admin/settings'); if (!r.ok) return; const j0 = await r.json(); const st = j0.settings;
   $('sGrow').value = st.growth_rate; $('sGain').value = st.anger_gain; $('sResearch').checked = !!st.research_enabled; $('sTopic').checked = !!st.topic_enabled; $('sFirst').value = st.topic_first_sec; $('sInt').value = st.topic_interval_sec;
   $('sWeather').checked = !!st.weather_enabled; $('sGuard').checked = !!st.guard_enabled; $('sPart').value = String(st.particle_level);
   const d = j0.ttsDefaults || {};
-  $('sTtsPrimary').value = String(st.tts_primary || 0); $('sTtsCpu').value = st.tts_cpu_speaker || ''; $('sTtsModel').value = st.tts_cloud_model || ''; $('sTtsStyle').value = st.tts_cloud_style >= 0 ? st.tts_cloud_style : ''; $('sTtsTmo').value = st.tts_timeout_ms || '';
-  $('sTtsCpu').placeholder = d.cpuSpeaker || ''; $('sTtsModel').placeholder = d.cloudModel || ''; $('sTtsStyle').placeholder = d.cloudStyle ?? ''; $('sTtsTmo').placeholder = d.timeoutMs || '';
+  $('sTtsPrimary').value = String(st.tts_primary || 0); fillCpuVoices(st.tts_cpu_speaker || 0, d.cpuSpeaker); $('sTtsModel').value = st.tts_cloud_model || ''; $('sTtsStyle').value = st.tts_cloud_style >= 0 ? st.tts_cloud_style : ''; $('sTtsTmo').value = st.tts_timeout_ms || '';
+   $('sTtsModel').placeholder = d.cloudModel || ''; $('sTtsStyle').placeholder = d.cloudStyle ?? ''; $('sTtsTmo').placeholder = d.timeoutMs || '';
 }
 $('sSave').onclick = async () => {
   const body = { growth_rate: +$('sGrow').value, anger_gain: +$('sGain').value, research_enabled: $('sResearch').checked ? 1 : 0, topic_enabled: $('sTopic').checked ? 1 : 0, topic_first_sec: +$('sFirst').value, topic_interval_sec: +$('sInt').value, weather_enabled: $('sWeather').checked ? 1 : 0, guard_enabled: $('sGuard').checked ? 1 : 0, particle_level: +$('sPart').value, tts_primary: +$('sTtsPrimary').value, tts_cpu_speaker: +$('sTtsCpu').value || 0, tts_cloud_model: $('sTtsModel').value.trim(), tts_cloud_style: $('sTtsStyle').value === '' ? -1 : +$('sTtsStyle').value, tts_timeout_ms: +$('sTtsTmo').value || 0 };

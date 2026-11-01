@@ -109,6 +109,10 @@
 - 音声認識は、既存の `hit-whisper-stt` の WebSocket（16kHz PCM）へ nginx 経由でつなぎます。
 - マイクは HTTPS が必要なので、`https://holo.s-quad.com/` で開きます。
 
+### 声の設定（管理メニュー）
+
+「ルミの設定」で、声（Aivis）の主（既定 / Cloud / CPU版）・声ID（CPU版・Cloud）・タイムアウト（ms）を変えられます。保存すると次の読み上げから反映され、再起動は要りません。空欄・0・「既定」は `.env` の値を使います。
+
 ### 声は文ごとに分けて、先頭から再生
 
 CPU 版の声は長い文だと数秒かかるので、返事を文ごとに分けて `/api/tts` を呼び、最初の文ができしだい再生します（体感の待ち時間は最初の 1 文ぶん）。詳しくは [docs/TTS_STREAMING.md](docs/TTS_STREAMING.md)。
@@ -126,7 +130,7 @@ CPU 版の声は長い文だと数秒かかるので、返事を文ごとに分�
 | `TYPESAFE_API_KEY` | Jev（動き・話しかけ方の判断、任意） |
 | `ADMIN_USER` / `ADMIN_PASSWORD` | 最初の管理者（ユーザーが 0 人のときだけ作られる。パスワードは 8 文字以上） |
 | `DB_PATH` | SQLite の場所（既定 `/data/db/orb.db`、Docker のボリューム `orb-data`） |
-| `TTS_PRIMARY` | `cloud`（既定）または `cpu` |
+| `TTS_PRIMARY` | `cloud`（既定）または `cpu`。**管理メニュー（ルミの設定）で上書きできる** |
 | `TTS_SPEAKER_ID` / `TTS_FALLBACK_SPEAKER_ID` | 声（CPU 版 / クラウド版） |
 
 ### 返答 API の仕様

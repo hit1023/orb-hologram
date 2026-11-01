@@ -310,21 +310,34 @@ const VOICE = {   // 感情ごとの声の調子(Aivisルーターの speed / in
 const ENG = { chat: null, tts: null };
 const mark = (k, v) => { ENG[k] = { ...v, at: Date.now() }; };
 
+// 声の設定。管理メニュー(settings)が優先で、0 のものは .env の値(なければ既定)を使う
+function ttsConf() {
+  const st = store.getSettings();
+  return {
+    primary: st.tts_primary === 1 ? 'cloud' : st.tts_primary === 2 ? 'cpu' : TTS_PRIMARY,
+    cpuSpeaker: st.tts_cpu_speaker || SPEAKER_ID,
+    cloudSpeaker: st.tts_cloud_speaker || FALLBACK_SPEAKER_ID,
+    timeoutMs: st.tts_timeout_ms || TTS_TIMEOUT_MS,
+  };
+}
+
 // 声をつくる(Aivis)。短い定型の一言は覚えておく
 // session: ユーザーごとのID。Aivisルーターが「同じ人は成功した同じ台」を使い続けるのに使う(台が変わると初回だけ遅いため)
 async function ttsBuffer(text, emotion, session) {
   const t0 = Date.now();
-  const ckey = `${emotion || ''}|${text}`;
+  const ck = ttsConf();
+  const ckey = `${ck.primary}|${ck.cpuSpeaker}|${ck.cloudSpeaker}|${emotion || ''}|${text}`;
   if (ttsCache.has(ckey)) return ttsCache.get(ckey);
   const synth = (base, id, ms) => fetch(`${base}/speak`, {
     method: 'POST', headers: { 'content-type': 'application/json', ...(session ? { 'x-session-id': session } : {}) },
     body: JSON.stringify({ text: text.slice(0, 300), speaker_id: id, ...(VOICE[emotion] || {}) }),
     signal: AbortSignal.timeout(ms),
   });
-  const cpu = [ROUTER, SPEAKER_ID, 'cpu'], cloud = [FALLBACK_ROUTER, FALLBACK_SPEAKER_ID, 'cloud'];
-  const [first, second] = TTS_PRIMARY === 'cloud' ? [cloud, cpu] : [cpu, cloud];
+  const c = ttsConf();
+  const cpu = [ROUTER, c.cpuSpeaker, 'cpu'], cloud = [FALLBACK_ROUTER, c.cloudSpeaker, 'cloud'];
+  const [first, second] = c.primary === 'cloud' ? [cloud, cpu] : [cpu, cloud];
   let r, via = first[2];
-  try { r = await synth(first[0], first[1], TTS_TIMEOUT_MS); if (!r.ok) throw new Error(`status ${r.status}`); }
+  try { r = await synth(first[0], first[1], c.timeoutMs); if (!r.ok) throw new Error(`status ${r.status}`); }
   catch (e) {   // 主が遅い/落ちているときは予備へ
     console.log(`[tts] ${first[2]} failed (${e.message}) -> ${second[2]}`);
     via = second[2]; r = await synth(second[0], second[1], 30000); ENG.ttsWhy = `${first[2]}が失敗(${e.message})`;
@@ -454,8 +467,8 @@ http.createServer(async (req, res) => {
       const me = currentUser(req);
       if (!me) return send(res, 401, { error: 'login required' });
       if (me.role !== 'admin') return send(res, 403, { error: '管理者だけが使えます' });
-      if (req.method === 'GET' && url === '/api/admin/engines') return send(res, 200, { chat: { primary: CF_ACCOUNT && CF_TOKEN ? `Cloudflare Workers AI (${CF_MODEL.split('/').pop()})` : 'Claude CLI', fallback: 'Claude CLI (' + MODEL + ')', last: ENG.chat }, tts: { primary: TTS_PRIMARY === 'cloud' ? 'Aivis Cloud' : 'Aivis CPU版(h-2)', fallback: TTS_PRIMARY === 'cloud' ? 'Aivis CPU版(h-2)' : 'Aivis Cloud', last: ENG.tts }, jev: !!JEV_KEY, research: 'Claude CLI (' + MODEL + ', Web検索のみ)', zenoh: bus.zenohEnabled() });
-      if (req.method === 'GET' && url === '/api/admin/settings') return send(res, 200, { settings: store.getSettings() });
+      if (req.method === 'GET' && url === '/api/admin/engines') return send(res, 200, { chat: { primary: CF_ACCOUNT && CF_TOKEN ? `Cloudflare Workers AI (${CF_MODEL.split('/').pop()})` : 'Claude CLI', fallback: 'Claude CLI (' + MODEL + ')', last: ENG.chat }, tts: { primary: ttsConf().primary === 'cloud' ? 'Aivis Cloud' : 'Aivis CPU版(h-2)', fallback: ttsConf().primary === 'cloud' ? 'Aivis CPU版(h-2)' : 'Aivis Cloud', last: ENG.tts }, jev: !!JEV_KEY, research: 'Claude CLI (' + MODEL + ', Web検索のみ)', zenoh: bus.zenohEnabled() });
+      if (req.method === 'GET' && url === '/api/admin/settings') return send(res, 200, { settings: store.getSettings(), ttsDefaults: { primary: TTS_PRIMARY, cpuSpeaker: SPEAKER_ID, cloudSpeaker: FALLBACK_SPEAKER_ID, timeoutMs: TTS_TIMEOUT_MS } });
       if (req.method === 'POST' && url === '/api/admin/settings') { const b = await readJson(req); console.log(`[admin] ${me.username} が設定を変更 ${JSON.stringify(b)}`); return send(res, 200, { settings: store.setSettings(b) }); }
       if (req.method === 'GET' && url === '/api/admin/users')
         return send(res, 200, { users: store.listUsers().map(u => ({ ...u, mood: moodView(u.id), turns: store.countTurns(u.id), growth: growth.view(u.id) })) });

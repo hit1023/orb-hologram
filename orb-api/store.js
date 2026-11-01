@@ -174,14 +174,14 @@ function saveMoodRow(userId, m) {
 const saveImpression = (userId, text, turns, stance) =>
   db.prepare('UPDATE moods SET impression = ?, impr_turns = ?, impr_stance = ?, impr_at = ? WHERE user_id = ?').run(text, turns, stance, now(), userId);
 // ---- 管理者が決める設定(ルミの動かし方) ----
-const SETTING_DEFAULTS = { growth_rate: 100, anger_gain: 150, research_enabled: 1, topic_enabled: 1, topic_first_sec: 75, topic_interval_sec: 240, weather_enabled: 1, guard_enabled: 1, particle_level: 2 };
+const SETTING_DEFAULTS = { growth_rate: 100, anger_gain: 150, research_enabled: 1, topic_enabled: 1, topic_first_sec: 75, topic_interval_sec: 240, weather_enabled: 1, guard_enabled: 1, particle_level: 2, tts_primary: 0, tts_cpu_speaker: 0, tts_cloud_speaker: 0, tts_timeout_ms: 0 };   // tts_*: 0 = 環境変数(.env)の値を使う。tts_primary は 1=cloud 2=cpu
 function getSettings() {
   const out = { ...SETTING_DEFAULTS };
   for (const r of db.prepare('SELECT key, value FROM settings').all()) if (r.key in out) out[r.key] = Number(r.value);
   return out;
 }
 function setSettings(patch) {
-  const lim = { growth_rate: [20, 500], anger_gain: [50, 300], research_enabled: [0, 1], topic_enabled: [0, 1], topic_first_sec: [10, 3600], topic_interval_sec: [30, 86400], weather_enabled: [0, 1], guard_enabled: [0, 1], particle_level: [1, 3] };
+  const lim = { growth_rate: [20, 500], anger_gain: [50, 300], research_enabled: [0, 1], topic_enabled: [0, 1], topic_first_sec: [10, 3600], topic_interval_sec: [30, 86400], weather_enabled: [0, 1], guard_enabled: [0, 1], particle_level: [1, 3], tts_primary: [0, 2], tts_cpu_speaker: [0, 4294967295], tts_cloud_speaker: [0, 4294967295], tts_timeout_ms: [0, 60000] };
   for (const [k, v] of Object.entries(patch || {})) {
     if (!(k in lim)) continue; const n = Math.round(Number(v)); if (!Number.isFinite(n)) continue;
     db.prepare('INSERT INTO settings (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value').run(k, String(Math.max(lim[k][0], Math.min(lim[k][1], n))));

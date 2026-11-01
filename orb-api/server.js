@@ -420,14 +420,14 @@ setInterval(() => researchTick().catch(() => {}), 5000).unref();
 const userView = (u) => ({ id: u.id, username: u.username, role: u.role });
 const moodView = (id) => { const m = moodLib.decayed(store.loadMoodRow(id)); return { ...moodLib.round(m), label: moodLib.label(m), stance: moodLib.stance(m) }; };
 
-async function chatFor(user, text, history) {
+async function chatFor(user, text, history, opts = {}) {
   const t0 = Date.now();
   // 話しかけ方の分析(気分の更新)と、過去の記憶の検索(埋め込み)を並べて待つ
   const [turn, qvec] = await Promise.all([userTurn(user, text.slice(0, 300)), memory.embedQuery(text.slice(0, 300))]);
   const mems = memory.recall(user.id, qvec);
   if (turn.askFeeling) await Promise.race([analyzeFeelings(user, turn.raw, true), new Promise(r => setTimeout(r, 3500))]);   // 聞かれたときは、最新の本音を作ってから答える
   const gr = growth.view(user.id), st = gr.stage;                                   // 成長段階(卵・ひかりのたま・ちびルミ・ルミ・ほしのルミ)で、話し方とできることが変わる
-  const system = growth.baseSystem(st, SYSTEM) + `\n\n話し相手のユーザー名は「${user.username}」。` + moodLib.guide(turn.raw, turn.refused, (store.loadMoodRow(user.id) || {}).impression, turn.attacked) + (store.getSettings().weather_enabled && growth.can.weather(st) ? weather.block(store.getEnv(user.id)) : '') + memory.block(mems) + (turn.askFeeling ? feelingBlock(user, turn.raw) : '') + growth.note(st, gr.kind);
+  const system = growth.baseSystem(st, SYSTEM) + `\n\n話し相手のユーザー名は「${user.username}」。` + moodLib.guide(turn.raw, turn.refused, (store.loadMoodRow(user.id) || {}).impression, turn.attacked) + (store.getSettings().weather_enabled && growth.can.weather(st) ? weather.block(store.getEnv(user.id)) : '') + memory.block(mems) + (turn.askFeeling ? feelingBlock(user, turn.raw) : '') + growth.note(st, gr.kind) + (opts.voiceOnly ? '\n\n今は画面のないスマートスピーカー(Echo)越しの、声だけの会話。画面・動き・見た目には触れず、聞いてわかる短め(2〜3文)の話し言葉で返す。' : '');
   const stored = store.recentTurns(user.id, 8).flatMap(t => [{ role: 'user', text: t.user_text }, { role: 'ai', text: t.reply }]);
   const hist = stored.length ? stored : history;                  // 会話履歴はサーバーに保存したものを使う(ページを開き直しても続く)
   let raw, via = 'cf';
@@ -607,7 +607,7 @@ http.createServer(async (req, res) => {
         const proto = req.headers['x-forwarded-proto'] || 'https';
         const out = await alexa.handle({
           body, origin: ALEXA_ORIGIN || `${proto}://${req.headers.host}`, log: (m) => console.log(m),
-          chat: (text) => chatFor(u, text, []), tts: (text, emo) => ttsBuffer(text, emo, `orb-${u.id}`),
+          chat: (text) => chatFor(u, text, [], { voiceOnly: true }), tts: (text, emo) => ttsBuffer(text, emo, `orb-${u.id}`),
         });
         return send(res, 200, out);
       }

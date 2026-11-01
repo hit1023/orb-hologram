@@ -491,9 +491,14 @@ http.createServer(async (req, res) => {
         try {
           if (!AIVIS_KEY) throw new Error('AIVIS_CLOUD_API_KEY が未設定');
           if (!cloudVoices.at || Date.now() - cloudVoices.at > 600000) {
-            const r = await fetch(`${AIVIS_API}/v1/aivm-models/search?sort=download&limit=50`, { headers: { authorization: `Bearer ${AIVIS_KEY}` }, signal: AbortSignal.timeout(8000) });
-            if (!r.ok) throw new Error(`status ${r.status}`);
-            cloudVoices = { at: Date.now(), list: ((await r.json()).aivm_models || []).flatMap(m => (m.speakers || []).flatMap(sp => (sp.styles || []).map(st => ({ model: m.aivm_model_uuid, style: st.local_id, name: sp.name, styleName: st.name, modelName: m.name })))) };
+            const models = [];   // 1回30件まで。全件(最大150)を順に取る
+            for (let off = 0; off < 150; off += 30) {
+              const r = await fetch(`${AIVIS_API}/v1/aivm-models/search?sort=download&limit=30&offset=${off}`, { headers: { authorization: `Bearer ${AIVIS_KEY}` }, signal: AbortSignal.timeout(8000) });
+              if (!r.ok) throw new Error(`status ${r.status}`);
+              const j = await r.json(); models.push(...(j.aivm_models || []));
+              if (!(j.aivm_models || []).length || models.length >= (j.total || 0)) break;
+            }
+            cloudVoices = { at: Date.now(), list: models.flatMap(m => (m.speakers || []).flatMap(sp => (sp.styles || []).map(st => ({ model: m.aivm_model_uuid, style: st.local_id, name: sp.name, styleName: st.name, modelName: m.name })))) };
           }
           return send(res, 200, { voices: cloudVoices.list });
         } catch (e) { return send(res, 200, { voices: [], error: e.message }); }

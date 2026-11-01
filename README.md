@@ -99,19 +99,19 @@
 ```
 ブラウザ ── /api/chat ──▶ orb-api ──▶ Cloudflare Workers AI（失敗時 Claude Code CLI） → {reply, emotion, actions}
         ── /api/act  ──▶ orb-api ──▶ TypeSafe Jev                                     → {actions}
-        ── /api/tts  ──▶ orb-api ──▶ Aivis ルーター(:8000) → Aivis Cloud(主) / h-2 CPU 版(予備) → mp3
+        ── /api/tts  ──▶ orb-api ──▶ Aivis Cloud API を直接(主) / h-2 の Aivis ルーター(予備) → mp3
         ── /ws/stt   ──▶ hit-whisper-stt(:18010, ElevenLabs Scribe)
 ```
 
 - `orb-api/`（Node、依存なし）が、返答・動きの判断・読み上げを担当します。
 - 返答は、Cloudflare Workers AI（AI Gateway `orb-hologram` 経由）が主です。Cloudflare の応答が空・失敗のときは、Claude Code CLI（haiku）に自動で戻ります。
-- 声は、Aivis Cloud が主、h-2 の CPU 版が予備です（`TTS_PRIMARY=cpu` で逆にできます）。短い定型の一言は、起動時に作ってメモリに覚えます。
+- 声は、Aivis Cloud（API を直接呼ぶ。ルーターは通さない）が主、h-2 の CPU 版（Aivis ルーター経由）が予備です（`TTS_PRIMARY=cpu` で逆にできます）。短い定型の一言は、起動時に作ってメモリに覚えます。
 - 音声認識は、既存の `hit-whisper-stt` の WebSocket（16kHz PCM）へ nginx 経由でつなぎます。
 - マイクは HTTPS が必要なので、`https://holo.s-quad.com/` で開きます。
 
 ### 声の設定（管理メニュー）
 
-「ルミの設定」で、声（Aivis）の主（既定 / Cloud / CPU版）・声ID（CPU版・Cloud）・タイムアウト（ms）を変えられます。保存すると次の読み上げから反映され、再起動は要りません。空欄・0・「既定」は `.env` の値を使います。
+「ルミの設定」で、声（Aivis）の主（既定 / Cloud / CPU版）・声ID（CPU版）・Cloud のモデルUUIDとスタイル番号・タイムアウト（ms）を変えられます。保存すると次の読み上げから反映され、再起動は要りません。空欄・0・「既定」は `.env` の値を使います。
 
 ### 声は文ごとに分けて、先頭から再生
 
@@ -131,7 +131,9 @@ CPU 版の声は長い文だと数秒かかるので、返事を文ごとに分�
 | `ADMIN_USER` / `ADMIN_PASSWORD` | 最初の管理者（ユーザーが 0 人のときだけ作られる。パスワードは 8 文字以上） |
 | `DB_PATH` | SQLite の場所（既定 `/data/db/orb.db`、Docker のボリューム `orb-data`） |
 | `TTS_PRIMARY` | `cloud`（既定）または `cpu`。**管理メニュー（ルミの設定）で上書きできる** |
-| `TTS_SPEAKER_ID` / `TTS_FALLBACK_SPEAKER_ID` | 声（CPU 版 / クラウド版） |
+| `TTS_SPEAKER_ID` | 声ID（CPU 版。Aivis ルーター経由） |
+| `AIVIS_CLOUD_API_KEY` | Aivis Cloud の API キー（**Cloud はルーターを通さず直接呼ぶ**） |
+| `TTS_CLOUD_MODEL_UUID` / `TTS_CLOUD_STYLE_ID` | Cloud の声（既定は まお／あまあま = `a59cb814-…` / 2） |
 
 ### 返答 API の仕様
 

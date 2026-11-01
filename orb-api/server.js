@@ -18,11 +18,14 @@ const { runResearch } = require('./research');
 
 const PORT = +process.env.PORT || 3000;
 const MODEL = process.env.CLAUDE_MODEL || 'haiku';
-// 主: h-2 の CPU 版 Aivis(無料)。遅いとき・失敗したときは h-1 の Aivis Cloud 版へ切り替える
+// 声は2系統。cpu=h-2 の CPU 版(Aivis ルーター経由・無料だが遅いことがある) / cloud=Aivis Cloud API を直接(ルーターは通さない)。
+// 主が遅い・失敗したときはもう一方へ切り替える
 const ROUTER = (process.env.TTS_ROUTER_URL || 'http://192.168.0.21:8000').replace(/\/$/, '');
 const SPEAKER_ID = +process.env.TTS_SPEAKER_ID || 888753762;
-const FALLBACK_ROUTER = (process.env.TTS_FALLBACK_URL || 'http://192.168.0.20:8000').replace(/\/$/, '');
-const FALLBACK_SPEAKER_ID = +process.env.TTS_FALLBACK_SPEAKER_ID || 387889485;
+const AIVIS_API = (process.env.AIVIS_CLOUD_API_URL || 'https://api.aivis-project.com').replace(/\/$/, '');
+const AIVIS_KEY = process.env.AIVIS_CLOUD_API_KEY || '';
+const CLOUD_MODEL = process.env.TTS_CLOUD_MODEL_UUID || 'a59cb814-0083-4369-8542-f51a29e72af7';   // まお
+const CLOUD_STYLE = process.env.TTS_CLOUD_STYLE_ID !== undefined && process.env.TTS_CLOUD_STYLE_ID !== '' ? +process.env.TTS_CLOUD_STYLE_ID : 2;   // あまあま(モデル内の番号 0〜31)
 const TTS_TIMEOUT_MS = +process.env.TTS_TIMEOUT_MS || 8000;
 // 返事は Cloudflare Workers AI(AI Gateway経由)が主。失敗したら Claude CLI へ戻す
 const CF_ACCOUNT = process.env.CLOUDFLARE_ACCOUNT_ID || '';
@@ -316,31 +319,40 @@ function ttsConf() {
   return {
     primary: st.tts_primary === 1 ? 'cloud' : st.tts_primary === 2 ? 'cpu' : TTS_PRIMARY,
     cpuSpeaker: st.tts_cpu_speaker || SPEAKER_ID,
-    cloudSpeaker: st.tts_cloud_speaker || FALLBACK_SPEAKER_ID,
+    cloudModel: st.tts_cloud_model || CLOUD_MODEL,
+    cloudStyle: st.tts_cloud_style >= 0 ? st.tts_cloud_style : CLOUD_STYLE,
     timeoutMs: st.tts_timeout_ms || TTS_TIMEOUT_MS,
   };
 }
 
 // 声をつくる(Aivis)。短い定型の一言は覚えておく
-// session: ユーザーごとのID。Aivisルーターが「同じ人は成功した同じ台」を使い続けるのに使う(台が変わると初回だけ遅いため)
+// session: ユーザーごとのID。CPU版のAivisルーターが「同じ人は成功した同じ台」を使い続けるのに使う(台が変わると初回だけ遅いため)
 async function ttsBuffer(text, emotion, session) {
   const t0 = Date.now();
   const ck = ttsConf();
-  const ckey = `${ck.primary}|${ck.cpuSpeaker}|${ck.cloudSpeaker}|${emotion || ''}|${text}`;
+  const ckey = `${ck.primary}|${ck.cpuSpeaker}|${ck.cloudModel}|${ck.cloudStyle}|${emotion || ''}|${text}`;
   if (ttsCache.has(ckey)) return ttsCache.get(ckey);
-  const synth = (base, id, ms) => fetch(`${base}/speak`, {
+  const c = ttsConf(), v = VOICE[emotion] || {}, body = text.slice(0, 300);
+  const synthCpu = (ms) => fetch(`${ROUTER}/speak`, {
     method: 'POST', headers: { 'content-type': 'application/json', ...(session ? { 'x-session-id': session } : {}) },
-    body: JSON.stringify({ text: text.slice(0, 300), speaker_id: id, ...(VOICE[emotion] || {}) }),
+    body: JSON.stringify({ text: body, speaker_id: c.cpuSpeaker, ...v }),
     signal: AbortSignal.timeout(ms),
   });
-  const c = ttsConf();
-  const cpu = [ROUTER, c.cpuSpeaker, 'cpu'], cloud = [FALLBACK_ROUTER, c.cloudSpeaker, 'cloud'];
+  const synthCloud = (ms) => {
+    if (!AIVIS_KEY) return Promise.reject(new Error('AIVIS_CLOUD_API_KEY が未設定'));
+    return fetch(`${AIVIS_API}/v1/tts/synthesize`, {   // ルーターは通さず Aivis Cloud API を直接呼ぶ
+      method: 'POST', headers: { 'content-type': 'application/json', authorization: `Bearer ${AIVIS_KEY}` },
+      body: JSON.stringify({ model_uuid: c.cloudModel, style_id: c.cloudStyle, text: body, output_format: 'mp3', speaking_rate: v.speed || 1, emotional_intensity: v.intonation || 1 }),
+      signal: AbortSignal.timeout(ms),
+    });
+  };
+  const cpu = [synthCpu, 'cpu'], cloud = [synthCloud, 'cloud'];
   const [first, second] = c.primary === 'cloud' ? [cloud, cpu] : [cpu, cloud];
   let r, via = first[2];
-  try { r = await synth(first[0], first[1], c.timeoutMs); if (!r.ok) throw new Error(`status ${r.status}`); }
+  try { r = await first[0](c.timeoutMs); if (!r.ok) throw new Error(`status ${r.status}`); }
   catch (e) {   // 主が遅い/落ちているときは予備へ
     console.log(`[tts] ${first[2]} failed (${e.message}) -> ${second[2]}`);
-    via = second[2]; r = await synth(second[0], second[1], 30000); ENG.ttsWhy = `${first[2]}が失敗(${e.message})`;
+    via = second[2]; r = await second[0](30000); ENG.ttsWhy = `${first[2]}が失敗(${e.message})`;
   }
   if (!r.ok) throw Object.assign(new Error(`tts ${r.status}`), { status: 502 });
   const buf = Buffer.from(await r.arrayBuffer());
@@ -468,7 +480,7 @@ http.createServer(async (req, res) => {
       if (!me) return send(res, 401, { error: 'login required' });
       if (me.role !== 'admin') return send(res, 403, { error: '管理者だけが使えます' });
       if (req.method === 'GET' && url === '/api/admin/engines') return send(res, 200, { chat: { primary: CF_ACCOUNT && CF_TOKEN ? `Cloudflare Workers AI (${CF_MODEL.split('/').pop()})` : 'Claude CLI', fallback: 'Claude CLI (' + MODEL + ')', last: ENG.chat }, tts: { primary: ttsConf().primary === 'cloud' ? 'Aivis Cloud' : 'Aivis CPU版(h-2)', fallback: ttsConf().primary === 'cloud' ? 'Aivis CPU版(h-2)' : 'Aivis Cloud', last: ENG.tts }, jev: !!JEV_KEY, research: 'Claude CLI (' + MODEL + ', Web検索のみ)', zenoh: bus.zenohEnabled() });
-      if (req.method === 'GET' && url === '/api/admin/settings') return send(res, 200, { settings: store.getSettings(), ttsDefaults: { primary: TTS_PRIMARY, cpuSpeaker: SPEAKER_ID, cloudSpeaker: FALLBACK_SPEAKER_ID, timeoutMs: TTS_TIMEOUT_MS } });
+      if (req.method === 'GET' && url === '/api/admin/settings') return send(res, 200, { settings: store.getSettings(), ttsDefaults: { primary: TTS_PRIMARY, cpuSpeaker: SPEAKER_ID, cloudModel: CLOUD_MODEL, cloudStyle: CLOUD_STYLE, timeoutMs: TTS_TIMEOUT_MS, cloudKey: !!AIVIS_KEY } });
       if (req.method === 'POST' && url === '/api/admin/settings') { const b = await readJson(req); console.log(`[admin] ${me.username} が設定を変更 ${JSON.stringify(b)}`); return send(res, 200, { settings: store.setSettings(b) }); }
       if (req.method === 'GET' && url === '/api/admin/users')
         return send(res, 200, { users: store.listUsers().map(u => ({ ...u, mood: moodView(u.id), turns: store.countTurns(u.id), growth: growth.view(u.id) })) });
@@ -644,5 +656,5 @@ http.createServer(async (req, res) => {
     const grumpy = ['はいはい…', 'もう、しかたないなぁ', 'むぅ…やればいいんでしょ', 'ふんっ、やるけどさ'];   // ちょっと不機嫌なときの一言(いかり30以上)
     for (const [list, emo] of [[happy, 'happy'], [grumpy, 'angry']]) for (const t of list) { try { await ttsBuffer(t, emo); } catch (_) {} }
   })();
-  console.log(`orb-api listening on ${PORT} (model=${MODEL}, chat=${CF_ACCOUNT && CF_TOKEN ? 'cf:' + CF_MODEL + (CF_GATEWAY ? '@' + CF_GATEWAY : '') : 'claude'}, tts=${TTS_PRIMARY}, jev=${JEV_KEY ? 'on' : 'off'}, speaker=${SPEAKER_ID}@${ROUTER}, fallback=${FALLBACK_SPEAKER_ID}@${FALLBACK_ROUTER})`);
+  console.log(`orb-api listening on ${PORT} (model=${MODEL}, chat=${CF_ACCOUNT && CF_TOKEN ? 'cf:' + CF_MODEL + (CF_GATEWAY ? '@' + CF_GATEWAY : '') : 'claude'}, tts=${TTS_PRIMARY}, jev=${JEV_KEY ? 'on' : 'off'}, speaker=${SPEAKER_ID}@${ROUTER}, cloud=direct:${CLOUD_MODEL}/${CLOUD_STYLE}${AIVIS_KEY ? '' : '(キー未設定)'})`);
 });

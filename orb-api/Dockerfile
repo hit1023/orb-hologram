@@ -1,9 +1,11 @@
 FROM node:22-slim
+# Alexa(Echo)用に、声のMP3を Alexa の形式へ変換するのに使う
+RUN apt-get update && apt-get install -y --no-install-recommends ffmpeg && rm -rf /var/lib/apt/lists/*
 # Claude Code の headless 実行は root だと拒否されるため、非rootで動かす
 RUN useradd -m -s /bin/bash appuser
 RUN npm install -g @anthropic-ai/claude-code
 WORKDIR /app
-COPY server.js store.js mood.js memory.js news.js weather.js bus.js research.js growth.js kinds.json ./
+COPY server.js store.js mood.js memory.js news.js weather.js bus.js research.js growth.js alexa.js kinds.json ./
 RUN mkdir -p /data/claude-config /data/db && chown -R appuser:appuser /data/claude-config /data/db
 ENV CLAUDE_CONFIG_DIR=/data/claude-config PORT=3000 DB_PATH=/data/db/orb.db
 USER appuser

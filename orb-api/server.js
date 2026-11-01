@@ -14,6 +14,8 @@ const news = require('./news');
 const weather = require('./weather');
 const bus = require('./bus');
 const growth = require('./growth');
+const alexa = require('./alexa');
+const crypto = require('crypto');
 const { runResearch } = require('./research');
 
 const PORT = +process.env.PORT || 3000;
@@ -21,6 +23,7 @@ const MODEL = process.env.CLAUDE_MODEL || 'haiku';
 // 声は2系統。cpu=h-2 の CPU 版(Aivis ルーター経由・無料だが遅いことがある) / cloud=Aivis Cloud API を直接(ルーターは通さない)。
 // 主が遅い・失敗したときはもう一方へ切り替える
 const ROUTER = (process.env.TTS_ROUTER_URL || 'http://192.168.0.21:8000').replace(/\/$/, '');
+const ALEXA_KEY = process.env.ALEXA_KEY || '', ALEXA_USER = process.env.ALEXA_USER || '', ALEXA_SKILL_ID = process.env.ALEXA_SKILL_ID || '', ALEXA_ORIGIN = (process.env.ALEXA_ORIGIN || '').replace(/\/$/, '');   // Echo対応(未設定なら無効)
 const SPEAKER_ID = +process.env.TTS_SPEAKER_ID || 888753762;
 const AIVIS_API = (process.env.AIVIS_CLOUD_API_URL || 'https://api.aivis-project.com').replace(/\/$/, '');
 const AIVIS_KEY = process.env.AIVIS_CLOUD_API_KEY || '';
@@ -417,6 +420,60 @@ setInterval(() => researchTick().catch(() => {}), 5000).unref();
 const userView = (u) => ({ id: u.id, username: u.username, role: u.role });
 const moodView = (id) => { const m = moodLib.decayed(store.loadMoodRow(id)); return { ...moodLib.round(m), label: moodLib.label(m), stance: moodLib.stance(m) }; };
 
+async function chatFor(user, text, history) {
+  const t0 = Date.now();
+  // 話しかけ方の分析(気分の更新)と、過去の記憶の検索(埋め込み)を並べて待つ
+  const [turn, qvec] = await Promise.all([userTurn(user, text.slice(0, 300)), memory.embedQuery(text.slice(0, 300))]);
+  const mems = memory.recall(user.id, qvec);
+  if (turn.askFeeling) await Promise.race([analyzeFeelings(user, turn.raw, true), new Promise(r => setTimeout(r, 3500))]);   // 聞かれたときは、最新の本音を作ってから答える
+  const gr = growth.view(user.id), st = gr.stage;                                   // 成長段階(卵・ひかりのたま・ちびルミ・ルミ・ほしのルミ)で、話し方とできることが変わる
+  const system = growth.baseSystem(st, SYSTEM) + `\n\n話し相手のユーザー名は「${user.username}」。` + moodLib.guide(turn.raw, turn.refused, (store.loadMoodRow(user.id) || {}).impression, turn.attacked) + (store.getSettings().weather_enabled && growth.can.weather(st) ? weather.block(store.getEnv(user.id)) : '') + memory.block(mems) + (turn.askFeeling ? feelingBlock(user, turn.raw) : '') + growth.note(st, gr.kind);
+  const stored = store.recentTurns(user.id, 8).flatMap(t => [{ role: 'user', text: t.user_text }, { role: 'ai', text: t.reply }]);
+  const hist = stored.length ? stored : history;                  // 会話履歴はサーバーに保存したものを使う(ページを開き直しても続く)
+  let raw, via = 'cf';
+  if (st === 0) { raw = JSON.stringify(growth.eggReply(turn.raw)); via = 'egg'; }           // 卵は話せない(ゆれる・光る音だけ)
+  else try {
+    if (!CF_ACCOUNT || !CF_TOKEN) throw new Error('no cloudflare key');
+    raw = await runCloudflare(text.slice(0, 500), hist, system);
+  } catch (e) {
+    console.log(`[chat] cloudflare failed (${e.message}) -> claude`); ENG.chatWhy = `Cloudflareが失敗(${e.message})`;
+    via = 'claude'; raw = await runClaude(buildPrompt(text.slice(0, 500), hist), system);
+  }
+  const out = parseReply(raw);
+  if (st < 3) {                                                                   // 調べ物はルミになってから(できないのに「調べておくね」と約束しない)
+    out.research = '';
+    if (/(調べて(み|お)る|調べておく|あとで教え|後で教え)/.test(out.reply)) out.reply = st === 2 ? 'それは、まだ、わからないの' : 'わかんない';
+  }
+  if (turn.refused) out.actions = ['sulk'];
+  out.actions = growth.filterActions(st, out.actions);
+  let rq = out.research || '';                                                  // あとで調べて報告する
+  out.researching = false;
+  const enqueue = (q) => {
+    if (!q || !store.getSettings().research_enabled) return false;
+    const id = store.addJob(user.id, q, text.slice(0, 200)); if (!id) return false;
+    bus.publish(user.id, user.username, 'research_queued', { id, query: q }); setTimeout(() => researchTick().catch(() => {}), 200); return true;
+  };
+  if (rq) out.researching = enqueue(rq);
+  else if (growth.can.research(st) && /(調べて(み|お)る|調べておく|あとで教え|後で教え)/.test(out.reply)) {      // 「調べるね」と言ったのに依頼が空 → 会話の流れから、具体的な調べ物を短く抜き出す(あいまいなら作らない)
+    const ctx = hist.slice(-4).map(h => `${h.role === 'user' ? '相手' : 'ルミ'}: ${String(h.text).slice(0, 80)}`).join('\n') + `\n相手: ${text.slice(0, 120)}\nルミ: ${out.reply.slice(0, 120)}`;
+    cfText('会話の流れから、ルミが「調べておく」と約束した具体的な調べ物を、Web検索に使える短い日本語(30字以内)で1つだけ書く。具体的な調べ物がない・あいまいなときは「なし」とだけ書く。', ctx, 60)
+      .then(q => { q = (q || '').trim().replace(/^["「『]|["」』]$/g, ''); if (q && !/^なし/.test(q) && q.length <= 40) enqueue(q); }).catch(() => {});
+  }
+  delete out.research;
+  if (turn.raw.anger >= 60 && ['neutral', 'happy'].includes(out.emotion)) out.emotion = 'angry';
+  else if (turn.raw.sadness >= 60 && ['neutral', 'happy'].includes(out.emotion)) out.emotion = 'sad';
+  out.mood = turn.mood; out.moodLabel = turn.moodLabel; out.stance = turn.stance; out.attacked = !!turn.attacked;
+  out.growth = growth.award(user.id, { manner: turn.manner, genre: turn.genre, len: text.length, rate: store.getSettings().growth_rate });   // 会話するほど育つ(経験値)
+  out.memories = mems.map(m => m.user_text.replace(/\s+/g, ' ').slice(0, 16));   // 思い出した言葉(画面で泡にする)
+  bus.publish(user.id, user.username, 'reply', { text: out.reply, emotion: out.emotion, stance: out.stance });
+  memory.remember(user.id, text.slice(0, 300), out.reply, out.emotion);   // 履歴に保存して、あとから思い出せるようにする
+  analyzeFeelings(user, turn.raw).catch(() => {});
+  extractInterests(user).catch(() => {});                                  // 興味のあるキーワードも、ときどき更新                         // 履歴×気分から、この人への本音を分析(裏で)
+  mark('chat', { via, ms: Date.now() - t0, why: via === 'claude' ? (ENG.chatWhy || '') : '' });
+  console.log(`[chat] ${user.username} ${via} ${Date.now() - t0}ms ask=${turn.askFeeling ? 1 : 0} mem=${mems.length} mood=${turn.mood.joy}/${turn.mood.anger}/${turn.mood.sadness}/♥${turn.mood.affinity} ${turn.stance} ${out.emotion} [${out.actions}]${turn.refused ? ' (ことわった)' : ''} ${out.reply}`);
+  return out;
+}
+
 http.createServer(async (req, res) => {
   try {
     const url = (req.url || '').split('?')[0];
@@ -533,6 +590,30 @@ http.createServer(async (req, res) => {
       return send(res, 404, { error: 'not found' });
     }
 
+    // ---- Amazon Echo(Alexaスキル) ----  ALEXA_KEY と ALEXA_USER が両方あるときだけ有効
+    if (url.startsWith('/api/alexa/')) {
+      if (!ALEXA_KEY) return send(res, 404, { error: 'not found' });
+      const am = url.match(/^\/api\/alexa\/audio\/([\w-]+)\.mp3$/);     // Alexaが取りに来る声。推測できないIDで5分だけ公開
+      if (req.method === 'GET' && am) { const b = alexa.getClip(am[1]); if (!b) return send(res, 404, { error: 'gone' }); res.writeHead(200, { 'content-type': 'audio/mpeg', 'cache-control': 'no-store' }); return res.end(b); }
+      if (req.method === 'POST' && url === '/api/alexa/skill') {
+        const q = new URL(req.url, 'http://x').searchParams;
+        const ok = q.get('key') && q.get('key').length === ALEXA_KEY.length && crypto.timingSafeEqual(Buffer.from(q.get('key')), Buffer.from(ALEXA_KEY));
+        if (!ok) return send(res, 403, { error: 'forbidden' });
+        const body = await readJson(req);
+        const appId = ((body.session || {}).application || {}).applicationId || ((body.context || {}).System || {}).application?.applicationId;
+        if (ALEXA_SKILL_ID && appId !== ALEXA_SKILL_ID) return send(res, 403, { error: 'wrong skill' });
+        const u = store.listUsers().find(x => x.username.toLowerCase() === ALEXA_USER.toLowerCase());
+        if (!u) return send(res, 500, { error: 'ALEXA_USER not found' });
+        const proto = req.headers['x-forwarded-proto'] || 'https';
+        const out = await alexa.handle({
+          body, origin: ALEXA_ORIGIN || `${proto}://${req.headers.host}`, log: (m) => console.log(m),
+          chat: (text) => chatFor(u, text, []), tts: (text, emo) => ttsBuffer(text, emo, `orb-${u.id}`),
+        });
+        return send(res, 200, out);
+      }
+      return send(res, 404, { error: 'not found' });
+    }
+
     // ここから先(返事・動き・声)は、ログインした人だけ
     let user = null;
     if (url === '/api/chat' || url === '/api/act' || url === '/api/tts' || url === '/api/topic' || url === '/api/report') {
@@ -600,57 +681,7 @@ http.createServer(async (req, res) => {
     if (req.method === 'POST' && url === '/api/chat') {
       const { text, history } = await readJson(req);
       if (!text || typeof text !== 'string') return send(res, 400, { error: 'text required' });
-      const t0 = Date.now();
-      // 話しかけ方の分析(気分の更新)と、過去の記憶の検索(埋め込み)を並べて待つ
-      const [turn, qvec] = await Promise.all([userTurn(user, text.slice(0, 300)), memory.embedQuery(text.slice(0, 300))]);
-      const mems = memory.recall(user.id, qvec);
-      if (turn.askFeeling) await Promise.race([analyzeFeelings(user, turn.raw, true), new Promise(r => setTimeout(r, 3500))]);   // 聞かれたときは、最新の本音を作ってから答える
-      const gr = growth.view(user.id), st = gr.stage;                                   // 成長段階(卵・ひかりのたま・ちびルミ・ルミ・ほしのルミ)で、話し方とできることが変わる
-      const system = growth.baseSystem(st, SYSTEM) + `\n\n話し相手のユーザー名は「${user.username}」。` + moodLib.guide(turn.raw, turn.refused, (store.loadMoodRow(user.id) || {}).impression, turn.attacked) + (store.getSettings().weather_enabled && growth.can.weather(st) ? weather.block(store.getEnv(user.id)) : '') + memory.block(mems) + (turn.askFeeling ? feelingBlock(user, turn.raw) : '') + growth.note(st, gr.kind);
-      const stored = store.recentTurns(user.id, 8).flatMap(t => [{ role: 'user', text: t.user_text }, { role: 'ai', text: t.reply }]);
-      const hist = stored.length ? stored : history;                  // 会話履歴はサーバーに保存したものを使う(ページを開き直しても続く)
-      let raw, via = 'cf';
-      if (st === 0) { raw = JSON.stringify(growth.eggReply(turn.raw)); via = 'egg'; }           // 卵は話せない(ゆれる・光る音だけ)
-      else try {
-        if (!CF_ACCOUNT || !CF_TOKEN) throw new Error('no cloudflare key');
-        raw = await runCloudflare(text.slice(0, 500), hist, system);
-      } catch (e) {
-        console.log(`[chat] cloudflare failed (${e.message}) -> claude`); ENG.chatWhy = `Cloudflareが失敗(${e.message})`;
-        via = 'claude'; raw = await runClaude(buildPrompt(text.slice(0, 500), hist), system);
-      }
-      const out = parseReply(raw);
-      if (st < 3) {                                                                   // 調べ物はルミになってから(できないのに「調べておくね」と約束しない)
-        out.research = '';
-        if (/(調べて(み|お)る|調べておく|あとで教え|後で教え)/.test(out.reply)) out.reply = st === 2 ? 'それは、まだ、わからないの' : 'わかんない';
-      }
-      if (turn.refused) out.actions = ['sulk'];
-      out.actions = growth.filterActions(st, out.actions);
-      let rq = out.research || '';                                                  // あとで調べて報告する
-      out.researching = false;
-      const enqueue = (q) => {
-        if (!q || !store.getSettings().research_enabled) return false;
-        const id = store.addJob(user.id, q, text.slice(0, 200)); if (!id) return false;
-        bus.publish(user.id, user.username, 'research_queued', { id, query: q }); setTimeout(() => researchTick().catch(() => {}), 200); return true;
-      };
-      if (rq) out.researching = enqueue(rq);
-      else if (growth.can.research(st) && /(調べて(み|お)る|調べておく|あとで教え|後で教え)/.test(out.reply)) {      // 「調べるね」と言ったのに依頼が空 → 会話の流れから、具体的な調べ物を短く抜き出す(あいまいなら作らない)
-        const ctx = hist.slice(-4).map(h => `${h.role === 'user' ? '相手' : 'ルミ'}: ${String(h.text).slice(0, 80)}`).join('\n') + `\n相手: ${text.slice(0, 120)}\nルミ: ${out.reply.slice(0, 120)}`;
-        cfText('会話の流れから、ルミが「調べておく」と約束した具体的な調べ物を、Web検索に使える短い日本語(30字以内)で1つだけ書く。具体的な調べ物がない・あいまいなときは「なし」とだけ書く。', ctx, 60)
-          .then(q => { q = (q || '').trim().replace(/^["「『]|["」』]$/g, ''); if (q && !/^なし/.test(q) && q.length <= 40) enqueue(q); }).catch(() => {});
-      }
-      delete out.research;
-      if (turn.raw.anger >= 60 && ['neutral', 'happy'].includes(out.emotion)) out.emotion = 'angry';
-      else if (turn.raw.sadness >= 60 && ['neutral', 'happy'].includes(out.emotion)) out.emotion = 'sad';
-      out.mood = turn.mood; out.moodLabel = turn.moodLabel; out.stance = turn.stance; out.attacked = !!turn.attacked;
-      out.growth = growth.award(user.id, { manner: turn.manner, genre: turn.genre, len: text.length, rate: store.getSettings().growth_rate });   // 会話するほど育つ(経験値)
-      out.memories = mems.map(m => m.user_text.replace(/\s+/g, ' ').slice(0, 16));   // 思い出した言葉(画面で泡にする)
-      bus.publish(user.id, user.username, 'reply', { text: out.reply, emotion: out.emotion, stance: out.stance });
-      memory.remember(user.id, text.slice(0, 300), out.reply, out.emotion);   // 履歴に保存して、あとから思い出せるようにする
-      analyzeFeelings(user, turn.raw).catch(() => {});
-      extractInterests(user).catch(() => {});                                  // 興味のあるキーワードも、ときどき更新                         // 履歴×気分から、この人への本音を分析(裏で)
-      mark('chat', { via, ms: Date.now() - t0, why: via === 'claude' ? (ENG.chatWhy || '') : '' });
-      console.log(`[chat] ${user.username} ${via} ${Date.now() - t0}ms ask=${turn.askFeeling ? 1 : 0} mem=${mems.length} mood=${turn.mood.joy}/${turn.mood.anger}/${turn.mood.sadness}/♥${turn.mood.affinity} ${turn.stance} ${out.emotion} [${out.actions}]${turn.refused ? ' (ことわった)' : ''} ${out.reply}`);
-      return send(res, 200, out);
+      return send(res, 200, await chatFor(user, text, history));
     }
     if (req.method === 'POST' && url === '/api/act') {          // 動きと話しかけ方を速く判断する(Jev)。キーがなくても、気分の更新はする
       const { text } = await readJson(req);

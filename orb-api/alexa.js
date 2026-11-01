@@ -41,7 +41,7 @@ async function handle({ body, origin, chat, tts, log }) {
   if (rq.type === 'LaunchRequest') sentences = ['はーい、ルミだよ。なんでも話しかけてね。'];
   else if (rq.intent && /AMAZON\.(Stop|Cancel)Intent/.test(rq.intent.name)) return { version: '1.0', response: { outputSpeech: { type: 'PlainText', text: 'またね。' }, shouldEndSession: true } };
   else if (/^(つづき|続き)/.test(said) && pending.get(sid)?.length) { sentences = pending.get(sid); pending.delete(sid); }
-  else if (!said) return { version: '1.0', response: { outputSpeech: { type: 'PlainText', text: 'ごめんね、聞き取れなかったよ。もう一回言って？' }, shouldEndSession: false } };
+  else if (!said) return { version: '1.0', response: { outputSpeech: { type: 'PlainText', text: 'ごめんね、聞き取れなかったよ。もう一回言って？' }, reprompt: { outputSpeech: { type: 'PlainText', text: 'なにか話して？' } }, shouldEndSession: false } };
   else {
     const r = await chat(said);
     sentences = splitSentences(r.reply); emotion = r.emotion || 'happy';
@@ -64,7 +64,8 @@ async function handle({ body, origin, chat, tts, log }) {
   if (rest.length) ssml += '<break time="300ms"/>続きは、「続き」って言ってね。';
   ssml += '</speak>';
   log(`[alexa] ${Date.now() - t0}ms ${done.length}/${sentences.length}文 「${said.slice(0, 20)}」`);
-  return { version: '1.0', response: { outputSpeech: { type: 'SSML', ssml }, shouldEndSession: false } };
+  // reprompt: 黙っていても「アレクサ」なしで聞き続ける時間を延ばす(返すのは待ちの一言だけ)
+  return { version: '1.0', response: { outputSpeech: { type: 'SSML', ssml }, reprompt: { outputSpeech: { type: 'PlainText', text: 'まだいるよ。なにか話して？' } }, shouldEndSession: false } };
 }
 
 module.exports = { handle, getClip };

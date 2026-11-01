@@ -1340,7 +1340,7 @@ function stopSpeaking() {
   if (replyCap) replyCap.endAt = performance.now();
 }
 // 読み上げ用に文ごとへ分ける(ルーター app/splitter.py と同じ考え方): 。！？改行で区切り、短い断片は次へくっつける
-function splitSentences(text, minLen = 8, maxLen = 60) {
+function splitSentences(text, minLen = 8, maxLen = 60, firstMax = 30) {
   const t = String(text || '').trim(); if (!t) return [];
   const parts = []; let buf = '';
   for (const ch of t) { buf += ch; if ('。！？!?\n'.includes(ch)) { if (buf.trim()) parts.push(buf.trim()); buf = ''; } }
@@ -1354,6 +1354,9 @@ function splitSentences(text, minLen = 8, maxLen = 60) {
   const out = []; let carry = '';
   for (const p of exp) { const c = carry + p; if (c.length < minLen) { carry = c; continue; } out.push(c); carry = ''; }
   if (carry) { if (out.length) out[out.length - 1] += carry; else out.push(carry); }
+  if (out.length && out[0].length > firstMax) {   // 先頭が長ければ最初の読点で1回だけ切る(最初の音を早く出す)
+    const h = out[0]; for (let i = 0; i < h.length - 1; i++) if ('、，,'.includes(h[i]) && i + 1 >= minLen) { out.splice(0, 1, h.slice(0, i + 1), h.slice(i + 1)); break; }
+  }
   return out;
 }
 async function speak(text, emo, actions) {

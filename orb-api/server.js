@@ -311,12 +311,13 @@ const ENG = { chat: null, tts: null };
 const mark = (k, v) => { ENG[k] = { ...v, at: Date.now() }; };
 
 // 声をつくる(Aivis)。短い定型の一言は覚えておく
-async function ttsBuffer(text, emotion) {
+// session: ユーザーごとのID。Aivisルーターが「同じ人は成功した同じ台」を使い続けるのに使う(台が変わると初回だけ遅いため)
+async function ttsBuffer(text, emotion, session) {
   const t0 = Date.now();
   const ckey = `${emotion || ''}|${text}`;
   if (ttsCache.has(ckey)) return ttsCache.get(ckey);
   const synth = (base, id, ms) => fetch(`${base}/speak`, {
-    method: 'POST', headers: { 'content-type': 'application/json' },
+    method: 'POST', headers: { 'content-type': 'application/json', ...(session ? { 'x-session-id': session } : {}) },
     body: JSON.stringify({ text: text.slice(0, 300), speaker_id: id, ...(VOICE[emotion] || {}) }),
     signal: AbortSignal.timeout(ms),
   });
@@ -614,7 +615,7 @@ http.createServer(async (req, res) => {
     if (req.method === 'POST' && url === '/api/tts') {
       const { text, emotion } = await readJson(req);
       if (!text || typeof text !== 'string') return send(res, 400, { error: 'text required' });
-      const buf = await ttsBuffer(text, emotion);
+      const buf = await ttsBuffer(text, emotion, `orb-${user.id}`);
       res.writeHead(200, { 'content-type': 'audio/mpeg', 'cache-control': 'no-store' });
       return res.end(buf);
     }

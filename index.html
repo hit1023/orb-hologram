@@ -143,8 +143,7 @@
       <label>パーティクル量 <select id="sPart"><option value="1">少</option><option value="2">ふつう</option><option value="3">多</option></select></label>
       <label>声(Aivis)の主 <select id="sTtsPrimary"><option value="0">既定(.env)</option><option value="1">Aivis Cloud</option><option value="2">CPU版(h-2)</option></select></label>
       <label>声(CPU版・ルーター経由) <select id="sTtsCpu" style="max-width:15em"></select></label>
-      <label>Cloud モデルUUID <input id="sTtsModel" type="text" style="width:19em" spellcheck="false"></label>
-      <label>Cloud スタイル番号 <input id="sTtsStyle" type="number" min="0" max="31" style="width:5em"></label>
+      <label>声(Aivis Cloud) <select id="sTtsCloud" style="max-width:15em"></select></label>
       <label>声のタイムアウト(ms) <input id="sTtsTmo" type="number" min="0" max="60000" step="500" style="width:7em"></label>
       <div id="sTtsHint" style="font-size:11px;color:#89a;line-height:1.5">Cloud は Aivis Cloud API を直接呼びます(ルーターは通しません)。空欄は既定値を使います。主に使う方が失敗・遅いときは、もう一方に自動で切り替わります。</div>
       <div class="row"><button id="sSave" class="primary sm" type="button">設定を保存</button><span id="sMsg" class="err ok"></span></div>
@@ -1716,16 +1715,28 @@ async function fillCpuVoices(cur, def) {
   if (cur && !list.some(v => v.id === cur)) add(cur, `ID ${cur}${list.length ? ' (一覧にない)' : ' (一覧を取得できません)'}`);
   sel.value = String(cur || 0);
 }
+// Aivis Cloud の声のセレクト。API から人気順の声を取り、保存済みの声を選んだ状態にする(空=既定=.envの値)。値は「モデルUUID|スタイル番号」
+async function fillCloudVoices(model, style, d) {
+  const sel = $('sTtsCloud'); sel.innerHTML = '';
+  const add = (v, t) => { const o = document.createElement('option'); o.value = v; o.textContent = t; sel.appendChild(o); };
+  add('', '既定' + (d && d.cloudModel ? ` (${d.cloudModel.slice(0, 8)}… / ${d.cloudStyle})` : ''));
+  let list = [], err = ''; try { const r = await jsend('GET', '/api/admin/tts/cloud-voices'); if (r.ok) { const j = await r.json(); list = j.voices || []; err = j.error || ''; } } catch (_) {}
+  const key = (m, s) => `${m}|${s}`;
+  for (const v of list) add(key(v.model, v.style), `${v.name} — ${v.styleName}` + (v.modelName && v.modelName !== v.name ? ` (${v.modelName})` : '') + (d && v.model === d.cloudModel && v.style === d.cloudStyle ? ' (既定)' : ''));
+  const cur = model ? key(model, style >= 0 ? style : (d ? d.cloudStyle : 0)) : '';
+  if (cur && !list.some(v => key(v.model, v.style) === cur)) add(cur, `${cur.slice(0, 8)}… / ${cur.split('|')[1]} (${list.length ? '一覧にない' : '一覧を取得できません' + (err ? ': ' + err : '')})`);
+  sel.value = cur;
+}
 async function loadSettingsForm() {
   const r = await jsend('GET', '/api/admin/settings'); if (!r.ok) return; const j0 = await r.json(); const st = j0.settings;
   $('sGrow').value = st.growth_rate; $('sGain').value = st.anger_gain; $('sResearch').checked = !!st.research_enabled; $('sTopic').checked = !!st.topic_enabled; $('sFirst').value = st.topic_first_sec; $('sInt').value = st.topic_interval_sec;
   $('sWeather').checked = !!st.weather_enabled; $('sGuard').checked = !!st.guard_enabled; $('sPart').value = String(st.particle_level);
   const d = j0.ttsDefaults || {};
-  $('sTtsPrimary').value = String(st.tts_primary || 0); fillCpuVoices(st.tts_cpu_speaker || 0, d.cpuSpeaker); $('sTtsModel').value = st.tts_cloud_model || ''; $('sTtsStyle').value = st.tts_cloud_style >= 0 ? st.tts_cloud_style : ''; $('sTtsTmo').value = st.tts_timeout_ms || '';
-   $('sTtsModel').placeholder = d.cloudModel || ''; $('sTtsStyle').placeholder = d.cloudStyle ?? ''; $('sTtsTmo').placeholder = d.timeoutMs || '';
+  $('sTtsPrimary').value = String(st.tts_primary || 0); fillCpuVoices(st.tts_cpu_speaker || 0, d.cpuSpeaker); fillCloudVoices(st.tts_cloud_model || '', st.tts_cloud_style >= 0 ? st.tts_cloud_style : -1, d); $('sTtsTmo').value = st.tts_timeout_ms || '';
+   $('sTtsTmo').placeholder = d.timeoutMs || '';
 }
 $('sSave').onclick = async () => {
-  const body = { growth_rate: +$('sGrow').value, anger_gain: +$('sGain').value, research_enabled: $('sResearch').checked ? 1 : 0, topic_enabled: $('sTopic').checked ? 1 : 0, topic_first_sec: +$('sFirst').value, topic_interval_sec: +$('sInt').value, weather_enabled: $('sWeather').checked ? 1 : 0, guard_enabled: $('sGuard').checked ? 1 : 0, particle_level: +$('sPart').value, tts_primary: +$('sTtsPrimary').value, tts_cpu_speaker: +$('sTtsCpu').value || 0, tts_cloud_model: $('sTtsModel').value.trim(), tts_cloud_style: $('sTtsStyle').value === '' ? -1 : +$('sTtsStyle').value, tts_timeout_ms: +$('sTtsTmo').value || 0 };
+  const body = { growth_rate: +$('sGrow').value, anger_gain: +$('sGain').value, research_enabled: $('sResearch').checked ? 1 : 0, topic_enabled: $('sTopic').checked ? 1 : 0, topic_first_sec: +$('sFirst').value, topic_interval_sec: +$('sInt').value, weather_enabled: $('sWeather').checked ? 1 : 0, guard_enabled: $('sGuard').checked ? 1 : 0, particle_level: +$('sPart').value, tts_primary: +$('sTtsPrimary').value, tts_cpu_speaker: +$('sTtsCpu').value || 0, tts_cloud_model: $('sTtsCloud').value ? $('sTtsCloud').value.split('|')[0] : '', tts_cloud_style: $('sTtsCloud').value ? +$('sTtsCloud').value.split('|')[1] : -1, tts_timeout_ms: +$('sTtsTmo').value || 0 };
   const r = await jsend('POST', '/api/admin/settings', body); const j = await r.json();
   $('sMsg').textContent = r.ok ? '保存しました' : (j.error || '保存できませんでした'); if (r.ok) { applySettings(j.settings); loadSettingsForm(); startGeo(true); }
   setTimeout(() => { $('sMsg').textContent = ''; }, 3000);

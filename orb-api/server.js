@@ -313,6 +313,7 @@ const VOICE = {   // 感情ごとの声の調子(Aivisルーターの speed / in
 const ENG = { chat: null, tts: null };
 const mark = (k, v) => { ENG[k] = { ...v, at: Date.now() }; };
 
+let cloudVoices = { at: 0, list: [] };
 // 声の設定。管理メニュー(settings)が優先で、0 のものは .env の値(なければ既定)を使う
 function ttsConf() {
   const st = store.getSettings();
@@ -485,6 +486,17 @@ http.createServer(async (req, res) => {
           const list = (await r.json()).flatMap(sp => (sp.styles || []).map(st => ({ id: st.id, name: sp.name, style: st.name })));
           return send(res, 200, { speakers: list });
         } catch (e) { return send(res, 200, { speakers: [], error: e.message }); }
+      }
+      if (req.method === 'GET' && url === '/api/admin/tts/cloud-voices') {   // Aivis Cloud で使える声の一覧(人気順)。設定画面のセレクト用。10分キャッシュ
+        try {
+          if (!AIVIS_KEY) throw new Error('AIVIS_CLOUD_API_KEY が未設定');
+          if (!cloudVoices.at || Date.now() - cloudVoices.at > 600000) {
+            const r = await fetch(`${AIVIS_API}/v1/aivm-models/search?sort=download&limit=50`, { headers: { authorization: `Bearer ${AIVIS_KEY}` }, signal: AbortSignal.timeout(8000) });
+            if (!r.ok) throw new Error(`status ${r.status}`);
+            cloudVoices = { at: Date.now(), list: ((await r.json()).aivm_models || []).flatMap(m => (m.speakers || []).flatMap(sp => (sp.styles || []).map(st => ({ model: m.aivm_model_uuid, style: st.local_id, name: sp.name, styleName: st.name, modelName: m.name })))) };
+          }
+          return send(res, 200, { voices: cloudVoices.list });
+        } catch (e) { return send(res, 200, { voices: [], error: e.message }); }
       }
       if (req.method === 'GET' && url === '/api/admin/engines') return send(res, 200, { chat: { primary: CF_ACCOUNT && CF_TOKEN ? `Cloudflare Workers AI (${CF_MODEL.split('/').pop()})` : 'Claude CLI', fallback: 'Claude CLI (' + MODEL + ')', last: ENG.chat }, tts: { primary: ttsConf().primary === 'cloud' ? 'Aivis Cloud' : 'Aivis CPU版(h-2)', fallback: ttsConf().primary === 'cloud' ? 'Aivis CPU版(h-2)' : 'Aivis Cloud', last: ENG.tts }, jev: !!JEV_KEY, research: 'Claude CLI (' + MODEL + ', Web検索のみ)', zenoh: bus.zenohEnabled() });
       if (req.method === 'GET' && url === '/api/admin/settings') return send(res, 200, { settings: store.getSettings(), ttsDefaults: { primary: TTS_PRIMARY, cpuSpeaker: SPEAKER_ID, cloudModel: CLOUD_MODEL, cloudStyle: CLOUD_STYLE, timeoutMs: TTS_TIMEOUT_MS, cloudKey: !!AIVIS_KEY } });

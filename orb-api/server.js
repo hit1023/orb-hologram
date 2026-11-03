@@ -352,16 +352,16 @@ async function ttsBuffer(text, emotion, session) {
   };
   const cpu = [synthCpu, 'cpu'], cloud = [synthCloud, 'cloud'];
   const [first, second] = c.primary === 'cloud' ? [cloud, cpu] : [cpu, cloud];
-  let r, via = first[2];
+  let r, via = first[1];
   try { r = await first[0](c.timeoutMs); if (!r.ok) throw new Error(`status ${r.status}`); }
   catch (e) {   // 主が遅い/落ちているときは予備へ
-    console.log(`[tts] ${first[2]} failed (${e.message}) -> ${second[2]}`);
-    via = second[2]; r = await second[0](30000); ENG.ttsWhy = `${first[2]}が失敗(${e.message})`;
+    console.log(`[tts] ${first[1]} failed (${e.message}) -> ${second[1]}`);
+    via = second[1]; r = await second[0](30000); ENG.ttsWhy = `${first[1]}が失敗(${e.message})`;
   }
   if (!r.ok) throw Object.assign(new Error(`tts ${r.status}`), { status: 502 });
   const buf = Buffer.from(await r.arrayBuffer());
   console.log(`[tts] ${via} ${Date.now() - t0}ms ${buf.length}B`);
-  mark('tts', { via, ms: Date.now() - t0, why: via === first[2] ? '' : ENG.ttsWhy || '' });
+  mark('tts', { via, ms: Date.now() - t0, why: via === first[1] ? '' : ENG.ttsWhy || '' });
   if (text.length <= 16) { ttsCache.set(ckey, buf); if (ttsCache.size > 80) ttsCache.delete(ttsCache.keys().next().value); }
   return buf;
 }

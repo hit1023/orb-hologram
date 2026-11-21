@@ -16,6 +16,7 @@ services:
       - ./dancer-motion.glb:/usr/share/nginx/html/dancer-motion.glb:ro
       - ./dancer.mp4:/usr/share/nginx/html/dancer.mp4:ro
       - ./nginx.conf:/etc/nginx/conf.d/default.conf:ro
+      - ./ap-key.inc:/etc/nginx/ap-key.inc:ro   # Git管理外(合言葉)。無いと起動しないので、新しい環境では先に作る
 
   orb-api:
     build: ./orb-api
